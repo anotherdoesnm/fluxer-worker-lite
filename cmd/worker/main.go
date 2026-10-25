@@ -427,6 +427,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"prunePostgresKvTtl": taskPrunePostgresKvTtl,
 	"expireStaleJobs":    taskExpireStaleJobs,
 	"extractEmbeds":      taskExtractEmbeds,
+	"drainActivitySpool": taskDrainActivitySpool,
 }
 
 // workerNC is the shared NATS connection. Handlers reach it through
