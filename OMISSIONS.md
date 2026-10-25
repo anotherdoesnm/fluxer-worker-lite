@@ -2,10 +2,10 @@
 
 State of 2026-10-25, against Fluxer API release `2026.1025.144746` (digest `408429273dc8`).
 
-Counts from `cmd/worker/spec.go`: **76 tasks**, of which 4 have handlers, 31 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **41 are parked**.
+Counts from `cmd/worker/spec.go`: **76 tasks**, of which 6 have handlers, 31 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **39 are parked**.
 
-Two different things are listed here: whole tasks we do not run, and gaps *inside* the four handlers we do run.
+Two different things are listed here: whole tasks we do not run, and gaps *inside* the six handlers we do run.
 A parked job is not lost — it is copied to `JOBS_PARKED` before the ack — except cron ticks, which are dropped
 deliberately because the scheduler regenerates them. What "dropped" means for a missing handler is therefore:
 the work simply never happens until the handler exists.
@@ -16,10 +16,12 @@ the work simply never happens until the handler exists.
 |---|---|---|
 | `prunePostgresKvTtl` | deletes expired `fluxer_kv` rows; runs the two one-time legacy passes (default-TTL backfill, job-ledger expiry) | full port, including the marker-hash contract |
 | `expireStaleJobs` | deadletters jobs stuck in `jobs_active` past 8 days, drops finished ones | full port |
-| `extractEmbeds` | link previews: URL extraction, `svc.unfurl`, KV write, `MESSAGE_UPDATE` | see §3 for the parts left out |
+| `extractEmbeds` | link previews: URL extraction, `svc.unfurl`, KV write, `MESSAGE_UPDATE` | see §4 for the parts left out |
 | `drainActivitySpool` | moves spooled activity events from the Redis list `activity:spool` into the `EVENTS` stream, under the `activity:spool:drain` lock | no-op on this instance: the `EVENTS` stream does not exist, so it reports that once and returns (see §2.7) |
+| `handleMentions` | asks the gateway who a message mentioned (`rpc.gateway.guild.resolve_mention_sources_page`, paged) and publishes `handleMentionChunk` jobs of 250 users | DM mentions are taken straight from the payload; thread scope is not ported (see §3) |
+| `handleMentionChunk` | per-user effect: `read_states.mention_count` +1 under the read-position guard, `recent_mentions` / `recent_mentions_by_guild` rows with a 7-day TTL, guild `suppress_everyone` / `suppress_roles` honoured | threads are written only if the payload says `thread: true`, which upstream sets through the thread scope |
 
-## 2. Not implemented — 41 tasks
+## 2. Not implemented — 39 tasks
 
 ### 2.1 Data rights and user lifecycle — the most consequential gap
 
@@ -41,7 +43,6 @@ the work simply never happens until the handler exists.
 
 | task | what breaks |
 |---|---|
-| `handleMentions`, `handleMentionChunk` | no "you were mentioned" state, no `recent_mentions` rows, no presence push |
 | `sendSystemDm` | system DMs (moderation notices, registration) are never delivered |
 | `notifyRegistrationApprovers` | registration mode here is **`approval`** (`registration_config.mode`), so this one matters: nobody is told that a person is waiting |
 
@@ -86,7 +87,15 @@ wires `NoopPurgeQueue` so nothing is ever queued, and upstream's own cron is not
 one of the 31 ignored tasks, and `deploy.sh` now passes the API's real adapter value to the worker so the gate closes
 automatically if a purge adapter is ever configured.
 
-## 3. Gaps inside `extractEmbeds`
+## 3. Gaps inside the ported handlers
+
+### 3.1 `handleMentions` / `handleMentionChunk`
+
+| omitted | reason | effect |
+|---|---|---|
+| thread mention scope (`ThreadMentionScope`) | upstream loads the thread's participants and filters the resolved mentions to them, and only then sets the thread read-state marker; the thread tables are another subsystem we do not read | in a thread channel a mention can reach members who are not in that thread, and the read state keeps its channel marker instead of the thread marker |
+
+## 4. Gaps inside `extractEmbeds`
 
 | omitted | reason | effect |
 |---|---|---|
@@ -96,7 +105,7 @@ automatically if a purge adapter is ever configured.
 | exact WHATWG URL normalisation | `net/url` + IDNA is close but not identical (`stripOwnAttachmentSignature` is not ported) | a self-CDN link may occasionally be unfurled instead of skipped |
 | `areEmbedsEquivalent` normalisation | compared by JSON instead of field-by-field normalisation | an extra write in rare cases, never a wrong one |
 
-## 4. Order I would port them in
+## 5. Order I would port them in
 
 1. `userProcessPendingDeletion(s)` + `messageShred` — data rights, and the only gap a user can notice and complain about.
 2. `expireAttachments` + `reconcileAttachmentDecay` — the bucket only grows.

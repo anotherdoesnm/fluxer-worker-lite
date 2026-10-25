@@ -103,6 +103,7 @@ func main() {
 	natsURL := env("NATS_URL", "nats://nats:4222")
 	stream := env("STREAM", "JOBS_GO")
 	jobPrefix := env("JOB_PREFIX", "jobs.go.")
+	publishPrefix = jobPrefix
 	dlqStream := env("DLQ_STREAM", "JOBS_GO_DLQ")
 	dlqPrefix := env("DLQ_PREFIX", "dlq.go.")
 	parkStream := env("PARK_STREAM", "JOBS_GO_PARKED")
@@ -278,6 +279,19 @@ func ensureConsumer(js nats.JetStreamContext, stream string, l laneSpec, prefix 
 	log.Printf("consumer %s ready (%d filters, concurrency %d)", l.Consumer, len(filters), l.Concurrency)
 }
 
+// publishJobWithID publishes a job with an explicit Nats-Msg-Id, so a fanout that
+// retries can rely on JetStream deduplication instead of doing the same work twice.
+func publishJobWithID(js nats.JetStreamContext, prefix, task string, payload map[string]any, msgID string) error {
+	env := envelope{Payload: payload, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	body, _ := json.Marshal(env)
+	var opts []nats.PubOpt
+	if msgID != "" {
+		opts = append(opts, nats.MsgId(msgID))
+	}
+	_, err := js.Publish(prefix+task, body, opts...)
+	return err
+}
+
 func publishJob(js nats.JetStreamContext, prefix, task string, payload map[string]any, runAt time.Time) error {
 	env := envelope{Payload: payload, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if !runAt.IsZero() {
@@ -424,10 +438,12 @@ func parkJob(js nats.JetStreamContext, parkPrefix, lane string, m *nats.Msg, tas
 // here is not silently skipped: taskPolicy() decides between park (copy the job
 // to the parked stream, keep it) and ignore (feature off, drop with a reason).
 var handlers = map[string]func(context.Context, map[string]any) error{
-	"prunePostgresKvTtl": taskPrunePostgresKvTtl,
-	"expireStaleJobs":    taskExpireStaleJobs,
-	"extractEmbeds":      taskExtractEmbeds,
-	"drainActivitySpool": taskDrainActivitySpool,
+	"prunePostgresKvTtl":  taskPrunePostgresKvTtl,
+	"expireStaleJobs":     taskExpireStaleJobs,
+	"extractEmbeds":       taskExtractEmbeds,
+	"drainActivitySpool":  taskDrainActivitySpool,
+	"handleMentions":      taskHandleMentions,
+	"handleMentionChunk":  taskHandleMentionChunk,
 }
 
 // workerNC is the shared NATS connection. Handlers reach it through
