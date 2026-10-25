@@ -79,7 +79,7 @@ crosspost job is ever produced.
 | `expireReportSnapshots`, `clearAuthenticatedReporterEmails` | report snapshots are never pruned; reporter emails stay stored |
 | `processInactivityDeletions` | the 730-day inactivity deletion never runs (config is `off` anyway) |
 | `backfillPasskeyTrait` | one-time passkey backfill for pre-passkey accounts |
-| `joinSingleCommunityMembers` | single-community mode is ON, so new accounts can be left waiting for the automatic guild join; it is parked (not ignored) since 2026-10-25 and its cron is now scheduled |
+| `joinSingleCommunityMembers` | single-community mode is ON, but the task is a one-shot backfill the API starts by writing `single_community:join_members_run`; the cron is now gated per tick on that key (absent right now, so it does not tick), and if a run does start the tick is parked until the handler exists |
 
 `processCachePurgeQueue` is **not** in this section: `FLUXER_CACHE_PURGE_ADAPTER` is unset, the default adapter is `none`, the API
 wires `NoopPurgeQueue` so nothing is ever queued, and upstream's own cron is not registered in that case either. It is

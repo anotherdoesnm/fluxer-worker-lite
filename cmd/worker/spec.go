@@ -11,6 +11,11 @@ package main
 // filters on purpose: a leftover message from an older release must be
 // acked, otherwise a workqueue stream keeps it forever and the consumer
 // keeps redelivering it.
+import (
+	"context"
+	"log"
+)
+
 type laneSpec struct {
 	Name          string
 	Consumer      string
@@ -115,7 +120,7 @@ var crons = []cronSpec{
 	{"syncFileShaBlocklists", "0 0 */12 * * *", "blocklists"},
 	{"flushUserActivityBuffer", "0 * * * * *", "always"},
 	{"drainActivitySpool", "*/5 * * * * *", "activity"},
-	{"joinSingleCommunityMembers", "0 * * * * *", "always"},
+	{"joinSingleCommunityMembers", "0 * * * * *", "community-pending"},
 	{"liftExpiredGuildInvitePauses", "0 * * * * *", "always"},
 	{"archiveInactiveThreads", "0 * * * * *", "always"},
 }
@@ -163,8 +168,30 @@ func cronEnabled(gate string) bool {
 		return env("CACHE_PURGE_ADAPTER", "none") != "none"
 	case "activity":
 		return env("ACTIVITY_EVENTS_PUBLISHING", "1") != "0"
-	case "community":
-		return env("SINGLE_COMMUNITY_JOIN", "0") == "1"
+	case "community-pending":
+		// Registered either way, because whether there is work is not known at
+		// start-up: upstream gates the job itself with
+		// `enabled: () => singleCommunityJoinPending(kvClient)`, which reads the
+		// run key. cronGateOpen takes the per-tick half of that decision.
+		return true
 	}
 	return false
+}
+
+// cronGateOpen is the per-tick half of a gate. cronEnabled decides whether the
+// cron is registered at all; this decides whether this particular tick is work.
+// Only gates whose state can change while the process runs need an entry here.
+func cronGateOpen(gate string) bool {
+	switch gate {
+	case "community-pending":
+		// JoinSingleCommunityMembers.ts: singleCommunityJoinPending() is
+		// `RUN_KEY !== null`, i.e. a backfill run was started and has not finished.
+		n, err := valkey().Exists(context.Background(), "single_community:join_members_run").Result()
+		if err != nil {
+			log.Printf("cron gate community-pending: %v", err)
+			return false
+		}
+		return n > 0
+	}
+	return true
 }
