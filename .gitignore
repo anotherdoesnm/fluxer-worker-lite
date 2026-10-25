@@ -1,0 +1,4 @@
+# Extracted api chunks (`dist/`) land here during analysis; they are build
+# artefacts of the upstream image, not sources.
+_extract/
+*.img.gz
