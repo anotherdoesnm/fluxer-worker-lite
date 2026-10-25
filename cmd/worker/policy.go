@@ -69,6 +69,7 @@ var ignoredTasks = map[string]string{
 	"endGuildVisitsForCode":      "guild visit analytics are not collected",
 	"pruneGuildVisits":           "guild visit analytics are not collected",
 	"endUnassignedGuildVisits":   "guild visit analytics are not collected",
+	"processCachePurgeQueue":     "cache purge adapter is none (FLUXER_CACHE_PURGE_ADAPTER unset; the default is none, so the API queues nothing and upstream skips the run too)",
 }
 
 // taskPolicy resolves a task name to its fate. handlers[] wins over

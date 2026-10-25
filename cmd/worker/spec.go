@@ -157,7 +157,10 @@ func cronEnabled(gate string) bool {
 	case "blocklists":
 		return env("BLOCKLIST_FEEDS_ENABLED", "0") == "1"
 	case "cachepurge":
-		return env("CACHE_PURGE_ADAPTER", "valkey") != "none"
+		// WorkerMain.ts registers this cron only when Config.cachePurge.adapter is
+		// not 'none'; the default is 'none' (ConfigLoader.ts) and this instance
+		// leaves FLUXER_CACHE_PURGE_ADAPTER unset, so the gate is closed here.
+		return env("CACHE_PURGE_ADAPTER", "none") != "none"
 	case "activity":
 		return env("ACTIVITY_EVENTS_PUBLISHING", "1") != "0"
 	case "community":

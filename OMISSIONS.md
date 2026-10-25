@@ -2,8 +2,8 @@
 
 State of 2026-10-25, against Fluxer API release `2026.1025.144746` (digest `408429273dc8`).
 
-Counts from `cmd/worker/spec.go`: **76 tasks**, of which 4 have handlers, 30 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **42 are parked**.
+Counts from `cmd/worker/spec.go`: **76 tasks**, of which 4 have handlers, 31 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **41 are parked**.
 
 Two different things are listed here: whole tasks we do not run, and gaps *inside* the four handlers we do run.
 A parked job is not lost — it is copied to `JOBS_PARKED` before the ack — except cron ticks, which are dropped
@@ -19,7 +19,7 @@ the work simply never happens until the handler exists.
 | `extractEmbeds` | link previews: URL extraction, `svc.unfurl`, KV write, `MESSAGE_UPDATE` | see §3 for the parts left out |
 | `drainActivitySpool` | moves spooled activity events from the Redis list `activity:spool` into the `EVENTS` stream, under the `activity:spool:drain` lock | no-op on this instance: the `EVENTS` stream does not exist, so it reports that once and returns (see §2.7) |
 
-## 2. Not implemented — 42 tasks
+## 2. Not implemented — 41 tasks
 
 ### 2.1 Data rights and user lifecycle — the most consequential gap
 
@@ -76,11 +76,15 @@ crosspost job is ever produced.
 | task | what breaks |
 |---|---|
 | `flushUserActivityBuffer` | the activity buffer is never flushed into the spool (the spool drain itself is implemented, but the `EVENTS` stream is missing) |
-| `processCachePurgeQueue` | cached entries the API asked to purge stay in valkey |
 | `expireReportSnapshots`, `clearAuthenticatedReporterEmails` | report snapshots are never pruned; reporter emails stay stored |
 | `processInactivityDeletions` | the 730-day inactivity deletion never runs (config is `off` anyway) |
 | `backfillPasskeyTrait` | one-time passkey backfill for pre-passkey accounts |
-| `joinSingleCommunityMembers` | single-community mode is ON, so new accounts can be left waiting for the automatic guild join; it is parked (not ignored) since 2026-10-25 and its cron is now scheduled (17/28) |
+| `joinSingleCommunityMembers` | single-community mode is ON, so new accounts can be left waiting for the automatic guild join; it is parked (not ignored) since 2026-10-25 and its cron is now scheduled |
+
+`processCachePurgeQueue` is **not** in this section: `FLUXER_CACHE_PURGE_ADAPTER` is unset, the default adapter is `none`, the API
+wires `NoopPurgeQueue` so nothing is ever queued, and upstream's own cron is not registered in that case either. It is
+one of the 31 ignored tasks, and `deploy.sh` now passes the API's real adapter value to the worker so the gate closes
+automatically if a purge adapter is ever configured.
 
 ## 3. Gaps inside `extractEmbeds`
 

@@ -34,6 +34,9 @@ media_endpoint=$(apienv FLUXER_MEDIA_PROXY_PUBLIC_ENDPOINT)
 media_proxy_secret=$(apienv FLUXER_MEDIA_PROXY_SECRET_KEY)
 attachment_secret=$(apienv FLUXER_MEDIA_PROXY_ATTACHMENT_URL_SECRETS_BASE64 | cut -d, -f1)
 instance_name=$(apienv FLUXER_APP_PRODUCT_NAME)
+# The cache purge cron is gated on the API's own adapter setting, so read it from
+# the API rather than guessing: unset means the default adapter, which is none.
+cache_purge_adapter=$(apienv FLUXER_CACHE_PURGE_ADAPTER)
 base_domain=$(apienv FLUXER_BASE_DOMAIN)
 pg_password=$(grep -m1 '^POSTGRES_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
 
@@ -54,6 +57,7 @@ docker run -d --name fluxer-worker-lite --network "$NETWORK" --restart no \
 	-e FLUXER_MEDIA_PROXY_SECRET_KEY="$media_proxy_secret" \
 	-e FLUXER_ATTACHMENT_URL_SECRET="$attachment_secret" \
 	-e FLUXER_INSTANCE_NAME="$instance_name" \
+	-e CACHE_PURGE_ADAPTER="$cache_purge_adapter" \
 	-e BUNDLE_CHECK_SEC="${BUNDLE_CHECK_SEC:-21600}" \
 	-e STATUS_ADDR=":${STATUS_PORT}" \
 	-e STATS_SEC="${STATS_SEC:-30}" \
