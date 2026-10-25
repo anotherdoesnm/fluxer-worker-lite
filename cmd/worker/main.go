@@ -14,7 +14,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -37,8 +36,10 @@ var (
 	dlqed    int64
 	unknown  int64
 	realRuns int64
-	stubRuns int64
+	ignored  int64
+	retired  int64
 	parked   int64
+	cronSkip int64
 	lastRSS  int64
 	started  = time.Now()
 )
@@ -104,12 +105,15 @@ func main() {
 	jobPrefix := env("JOB_PREFIX", "jobs.go.")
 	dlqStream := env("DLQ_STREAM", "JOBS_GO_DLQ")
 	dlqPrefix := env("DLQ_PREFIX", "dlq.go.")
+	parkStream := env("PARK_STREAM", "JOBS_GO_PARKED")
+	parkPrefix := env("PARK_PREFIX", "parked.go.")
 	hbPath := env("HEARTBEAT_PATH", "/tmp/fluxer-worker-heartbeat")
 	maxRSS := int64(envInt("MAX_RSS_MB", 96))
 	statsEvery := time.Duration(envInt("STATS_SEC", 30)) * time.Second
 
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	log.Printf("worker-lite start stream=%s prefix=%s heartbeat=%s max_rss=%dMB", stream, jobPrefix, hbPath, maxRSS)
+	log.Printf("worker-lite start stream=%s prefix=%s heartbeat=%s max_rss=%dMB spec_release=%s", stream, jobPrefix, hbPath, maxRSS, specRelease)
+	reportAPIMatch()
 
 	nc, err := nats.Connect(natsURL,
 		nats.MaxReconnects(-1),
@@ -121,6 +125,7 @@ func main() {
 		log.Fatalf("nats connect: %v", err)
 	}
 	defer nc.Close()
+	workerNC = nc
 
 	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 	if err != nil {
@@ -129,6 +134,7 @@ func main() {
 
 	ensureStream(js, stream, jobPrefix)
 	ensureStream(js, dlqStream, dlqPrefix)
+	ensureParkStream(js, parkStream, parkPrefix)
 
 	components := map[string]*hbComponent{}
 	for _, l := range lanes {
@@ -147,12 +153,17 @@ func main() {
 			if err != nil {
 				log.Fatalf("pull subscribe %s: %v", l.Consumer, err)
 			}
-			go laneLoop(ctx, l, sub, js, jobPrefix, dlqPrefix, components["lane:"+l.Name])
+			go laneLoop(ctx, l, sub, js, jobPrefix, dlqPrefix, parkPrefix, components["lane:"+l.Name])
 		}
 	}
 
 	c := cron.New(cron.WithSeconds())
+	scheduled := 0
 	for _, cs := range crons {
+		if !cronEnabled(cs.Gate) {
+			continue
+		}
+		scheduled++
 		task := cs.Task
 		if _, err := c.AddFunc(cs.Expr, func() {
 			cronComp.report()
@@ -165,10 +176,16 @@ func main() {
 	}
 	c.Start()
 	defer c.Stop()
-	log.Printf("cron: %d entries scheduled", len(crons))
+	log.Printf("cron: %d of %d entries scheduled (gated ones skipped)", scheduled, len(crons))
+	if statusAddr := env("STATUS_ADDR", ""); statusAddr != "" {
+		statusServer(statusAddr, js, parkStream, scheduled, len(crons))
+	}
 
 	go heartbeatLoop(ctx, hbPath, components)
 	go statsLoop(ctx, statsEvery, maxRSS, nc, stream, jobPrefix)
+	if bundleSec := envInt("BUNDLE_CHECK_SEC", 0); bundleSec > 0 {
+		go watchBundle(ctx, time.Duration(bundleSec)*time.Second)
+	}
 
 	if envInt("SEED_COUNT", 0) > 0 {
 		seed(js, jobPrefix, envInt("SEED_COUNT", 0))
@@ -190,8 +207,8 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
-	log.Printf("shutting down: seen=%d handled=%d nak=%d dlq=%d unknown=%d uptime=%s",
-		seen, handled, nakked, dlqed, unknown, time.Since(started).Round(time.Second))
+	log.Printf("shutting down: seen=%d handled=%d ignored=%d retired=%d parked=%d nak=%d dlq=%d unknown=%d uptime=%s",
+		seen, handled, ignored, retired, parked, nakked, dlqed, unknown, time.Since(started).Round(time.Second))
 }
 
 func ensureStream(js nats.JetStreamContext, name, prefix string) {
@@ -210,9 +227,38 @@ func ensureStream(js nats.JetStreamContext, name, prefix string) {
 	log.Printf("stream %s created", name)
 }
 
+// ensureParkStream creates the stream that holds jobs this worker cannot run
+// yet. It uses limits retention, not workqueue: parked jobs are a record, not a
+// queue to consume, and several copies of one job is fine. The age cap keeps a
+// forgotten park from growing into a second database.
+func ensureParkStream(js nats.JetStreamContext, name, prefix string) {
+	cfg := &nats.StreamConfig{
+		Name:      name,
+		Subjects:  []string{prefix + ">"},
+		Retention: nats.LimitsPolicy,
+		MaxAge:    30 * 24 * time.Hour,
+		MaxMsgs:   100000,
+		Discard:   nats.DiscardOld,
+	}
+	if _, err := js.StreamInfo(name); err == nil {
+		return
+	}
+	if _, err := js.AddStream(cfg); err != nil {
+		log.Fatalf("add parked stream %s: %v", name, err)
+	}
+	log.Printf("parked stream %s created", name)
+}
+
 func ensureConsumer(js nats.JetStreamContext, stream string, l laneSpec, prefix string) {
-	filters := make([]string, 0, len(l.Tasks))
+	filters := make([]string, 0, len(l.Tasks)+len(l.Retired))
 	for _, t := range l.Tasks {
+		filters = append(filters, prefix+t)
+	}
+	// Retired tasks stay in the filter on purpose: an old message written by a
+	// previous release must still be delivered, so this worker can ack and drop
+	// it. A workqueue stream never forgets a message nobody acknowledged, and a
+	// subject no consumer filters ages out only when the stream's MaxAge hits.
+	for _, t := range l.Retired {
 		filters = append(filters, prefix+t)
 	}
 	cfg := &nats.ConsumerConfig{
@@ -242,7 +288,7 @@ func publishJob(js nats.JetStreamContext, prefix, task string, payload map[strin
 	return err
 }
 
-func laneLoop(ctx context.Context, l laneSpec, sub *nats.Subscription, js nats.JetStreamContext, jobPrefix, dlqPrefix string, hb *hbComponent) {
+func laneLoop(ctx context.Context, l laneSpec, sub *nats.Subscription, js nats.JetStreamContext, jobPrefix, dlqPrefix, parkPrefix string, hb *hbComponent) {
 	timeout := time.Duration(l.AckWaitSec) / 2 * time.Second
 	if timeout < 5*time.Second {
 		timeout = 5 * time.Second
@@ -264,12 +310,12 @@ func laneLoop(ctx context.Context, l laneSpec, sub *nats.Subscription, js nats.J
 		for _, m := range msgs {
 			atomic.AddInt64(&seen, 1)
 			task := strings.TrimPrefix(m.Subject, jobPrefix)
-			handleMessage(js, l, m, task, timeout, dlqPrefix, jobPrefix)
+			handleMessage(js, l, m, task, timeout, dlqPrefix, jobPrefix, parkPrefix)
 		}
 	}
 }
 
-func handleMessage(js nats.JetStreamContext, l laneSpec, m *nats.Msg, task string, timeout time.Duration, dlqPrefix, jobPrefix string) {
+func handleMessage(js nats.JetStreamContext, l laneSpec, m *nats.Msg, task string, timeout time.Duration, dlqPrefix, jobPrefix, parkPrefix string) {
 	var env envelope
 	if err := json.Unmarshal(m.Data, &env); err != nil {
 		toDLQ(js, dlqPrefix, task, nil, fmt.Sprintf("bad envelope: %v", err), l.Name, m)
@@ -288,24 +334,56 @@ func handleMessage(js nats.JetStreamContext, l laneSpec, m *nats.Msg, task strin
 			}
 		}
 	}
+	if retiredTask(l, task) {
+		// A leftover from an older release. Upstream no longer publishes this
+		// task, so there is nobody who will ever run it: ack it or it stays in
+		// the workqueue stream for the stream's whole MaxAge.
+		atomic.AddInt64(&retired, 1)
+		ackTask(m, task)
+		return
+	}
 	if _, ok := knownTask(task); !ok {
 		atomic.AddInt64(&unknown, 1)
 		toDLQ(js, dlqPrefix, task, env.Payload, "unknown task type for this worker", l.Name, m)
 		return
 	}
+	switch taskPolicy(task) {
+	case policyIgnore:
+		atomic.AddInt64(&ignored, 1)
+		noteIgnored(task)
+		logIgnoredOnce(task)
+		ackTask(m, task)
+		return
+	case policyPark:
+		// A cron tick is not work in the sense a handler is: the scheduler
+		// publishes it again on its own interval, and we are the scheduler.
+		// Copying every tick into the parked stream would turn "do not lose
+		// work" into a slow leak — 1.4k messages in the first hour of the
+		// half-implemented worker. Drop the tick, keep the count visible.
+		if isCronTick(env.Payload) {
+			atomic.AddInt64(&cronSkip, 1)
+			noteCronSkip(task)
+			logCronSkipOnce(task)
+			ackTask(m, task)
+			return
+		}
+		parkJob(js, parkPrefix, l.Name, m, task, env)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	if err := runTask(ctx, task, env.Payload); err != nil {
-		if errors.Is(err, errNotImplemented) {
-			delay := time.Duration(envInt("PARK_DELAY_SEC", 30)) * time.Second
-			_ = m.NakWithDelay(delay)
-			return
-		}
 		log.Printf("task %s failed: %v (nack)", task, err)
+		noteFailed(task, err)
 		_ = m.Nak()
 		atomic.AddInt64(&nakked, 1)
 		return
 	}
+	noteHandled(task)
+	ackTask(m, task)
+}
+
+func ackTask(m *nats.Msg, task string) {
 	if err := m.Ack(); err != nil {
 		log.Printf("task %s: ack failed: %v", task, err)
 		return
@@ -313,38 +391,97 @@ func handleMessage(js nats.JetStreamContext, l laneSpec, m *nats.Msg, task strin
 	atomic.AddInt64(&handled, 1)
 }
 
-// errNotImplemented marks a task this worker cannot perform yet. Such a job is
-// NOT acked: acking would delete it from the workqueue stream and silently drop
-// the work upstream expects to happen (deletions, expiry, unfurls). It is
-// parked with a delayed nack instead, so it ages until the handler exists.
-var errNotImplemented = errors.New("task not implemented in worker-lite")
+// parkJob copies the job into the parked stream and only then acks it.
+//
+// Order matters: ack first and a failed publish would lose the job, publish
+// first and a failed ack would deliver it twice. A duplicate parked copy is the
+// cheaper failure, so the publish comes first and the ack is skipped if it
+// fails.
+func parkJob(js nats.JetStreamContext, parkPrefix, lane string, m *nats.Msg, task string, env envelope) {
+	body, _ := json.Marshal(map[string]any{
+		"task":       task,
+		"lane":       lane,
+		"subject":    m.Subject,
+		"payload":    env.Payload,
+		"run_at":     env.RunAt,
+		"created_at": env.CreatedAt,
+		"parked_at":  time.Now().UTC().Format(time.RFC3339Nano),
+		"reason":     "handler not implemented in worker-lite",
+	})
+	if _, err := js.Publish(parkPrefix+task, body); err != nil {
+		log.Printf("park %s: publish failed: %v (nack, will retry)", task, err)
+		_ = m.Nak()
+		atomic.AddInt64(&nakked, 1)
+		return
+	}
+	atomic.AddInt64(&parked, 1)
+	noteParked(task)
+	logParkedOnce(task)
+	ackTask(m, task)
+}
 
-// handlers maps a task name to its ported implementation. Everything not in
-// here is parked, and the stats line reports how many tasks are real and how
-// many are stubs — no silent gaps.
+// handlers maps a task name to its ported implementation. A task that is not
+// here is not silently skipped: taskPolicy() decides between park (copy the job
+// to the parked stream, keep it) and ignore (feature off, drop with a reason).
 var handlers = map[string]func(context.Context, map[string]any) error{
 	"prunePostgresKvTtl": taskPrunePostgresKvTtl,
+	"expireStaleJobs":    taskExpireStaleJobs,
+	"extractEmbeds":      taskExtractEmbeds,
 }
+
+// workerNC is the shared NATS connection. Handlers reach it through
+// workerNATS() so a test binary without a connection fails loudly instead of
+// dereferencing a nil.
+var workerNC *nats.Conn
+
+func workerNATS() *nats.Conn { return workerNC }
 
 func runTask(ctx context.Context, task string, payload map[string]any) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if h, ok := handlers[task]; ok {
-		atomic.AddInt64(&realRuns, 1)
-		return h(ctx, payload)
+	h, ok := handlers[task]
+	if !ok {
+		// taskPolicy only routes handled tasks here; reaching this line means the
+		// tables disagree, and the honest answer is an error, not a silent ack.
+		return fmt.Errorf("no handler for %s (policy tables disagree)", task)
 	}
-	atomic.AddInt64(&stubRuns, 1)
-	atomic.AddInt64(&parked, 1)
-	logParkedOnce(task)
-	return errNotImplemented
+	atomic.AddInt64(&realRuns, 1)
+	return h(ctx, payload)
 }
 
 var parkedLogged sync.Map
+var ignoredLogged sync.Map
 
 func logParkedOnce(task string) {
 	if _, loaded := parkedLogged.LoadOrStore(task, true); !loaded {
-		log.Printf("PARK task %s is not implemented yet; jobs are kept in the stream (delayed nack)", task)
+		log.Printf("PARK task %s has no handler yet; jobs are copied to the parked stream and acked", task)
+	}
+}
+
+var cronSkipLogged sync.Map
+
+func isCronTick(payload map[string]any) bool {
+	if payload == nil {
+		return false
+	}
+	v, ok := payload["cron"]
+	if !ok {
+		return false
+	}
+	b, ok := v.(bool)
+	return ok && b
+}
+
+func logCronSkipOnce(task string) {
+	if _, loaded := cronSkipLogged.LoadOrStore(task, true); !loaded {
+		log.Printf("PARK task %s: cron ticks dropped until the handler exists (each tick would regenerate the same job)", task)
+	}
+}
+
+func logIgnoredOnce(task string) {
+	if _, loaded := ignoredLogged.LoadOrStore(task, true); !loaded {
+		log.Printf("IGNORE task %s (%s): acked and dropped", task, ignoredTasks[task])
 	}
 }
 
@@ -453,10 +590,11 @@ func statsLoop(ctx context.Context, every time.Duration, maxRSS int64, nc *nats.
 		}
 		rss := rssMB()
 		lastRSS = rss
-		log.Printf("stats seen=%d handled=%d nak=%d dlq=%d unknown=%d real=%d stub=%d parked=%d rss=%dMB uptime=%s",
-			atomic.LoadInt64(&seen), atomic.LoadInt64(&handled), atomic.LoadInt64(&nakked),
-			atomic.LoadInt64(&dlqed), atomic.LoadInt64(&unknown),
-			atomic.LoadInt64(&realRuns), atomic.LoadInt64(&stubRuns), atomic.LoadInt64(&parked), rss,
+		log.Printf("stats api=%s seen=%d handled=%d real=%d ignored=%d retired=%d parked=%d cron=%d nak=%d dlq=%d unknown=%d rss=%dMB uptime=%s",
+			apiLabel(),
+			atomic.LoadInt64(&seen), atomic.LoadInt64(&handled), atomic.LoadInt64(&realRuns),
+			atomic.LoadInt64(&ignored), atomic.LoadInt64(&retired), atomic.LoadInt64(&parked),
+			atomic.LoadInt64(&cronSkip), atomic.LoadInt64(&nakked), atomic.LoadInt64(&dlqed), atomic.LoadInt64(&unknown), rss,
 			time.Since(started).Round(time.Second))
 		for subj, count := range streamSubjects(nc, stream, prefix) {
 			if !strings.HasPrefix(subj, prefix) {
