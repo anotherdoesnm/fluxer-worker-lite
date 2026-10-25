@@ -1,8 +1,9 @@
 package main
 
-// Generated from the fluxer-api image of self-hosting release
-// 2026.1025.35621 (dist chunk holding src/api/worker/WorkerLaneConfig.ts and
-// WorkerMain.ts). Do not hand-edit the task lists: regenerate them when the
+// Generated from the fluxer-api image of build 2026.1025.144746 (digest
+// 408429273dc8), read from src/api/worker/WorkerLaneConfig.ts and
+// WorkerMain.ts in that image. The 2026.1025.35621 tables were re-checked
+// against this release: 5 lanes, 76 tasks, 28 crons, unchanged. Do not hand-edit the task lists: regenerate them when the
 // release moves, because a consumer filter that misses one task silently
 // stops that work while everything still looks healthy.
 //
