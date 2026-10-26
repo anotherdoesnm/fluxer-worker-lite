@@ -38,6 +38,7 @@ instance_name=$(apienv FLUXER_APP_PRODUCT_NAME)
 # the API rather than guessing: unset means the default adapter, which is none.
 cache_purge_adapter=$(apienv FLUXER_CACHE_PURGE_ADAPTER)
 base_domain=$(apienv FLUXER_BASE_DOMAIN)
+admin_endpoint=$(apienv FLUXER_ADMIN_ENDPOINT)
 pg_password=$(grep -m1 '^POSTGRES_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
 
 echo "api image:   $api_image"
@@ -57,6 +58,7 @@ docker run -d --name fluxer-worker-lite --network "$NETWORK" --restart no \
 	-e FLUXER_MEDIA_PROXY_SECRET_KEY="$media_proxy_secret" \
 	-e FLUXER_ATTACHMENT_URL_SECRET="$attachment_secret" \
 	-e FLUXER_INSTANCE_NAME="$instance_name" \
+	-e FLUXER_ADMIN_ENDPOINT="$admin_endpoint" \
 	-e CACHE_PURGE_ADAPTER="$cache_purge_adapter" \
 	-e BUNDLE_CHECK_SEC="${BUNDLE_CHECK_SEC:-21600}" \
 	-e STATUS_ADDR=":${STATUS_PORT}" \
