@@ -39,6 +39,14 @@ instance_name=$(apienv FLUXER_APP_PRODUCT_NAME)
 cache_purge_adapter=$(apienv FLUXER_CACHE_PURGE_ADAPTER)
 base_domain=$(apienv FLUXER_BASE_DOMAIN)
 admin_endpoint=$(apienv FLUXER_ADMIN_ENDPOINT)
+# processAssetDeletionQueue deletes objects from the same store the api writes to,
+# so the credentials come from the api container as well. An empty set is not fatal:
+# the handler reports "s3 is not configured" and leaves the queue alone.
+s3_endpoint=$(apienv FLUXER_S3_ENDPOINT)
+s3_bucket=$(apienv FLUXER_S3_BUCKET_CDN)
+s3_access=$(apienv FLUXER_S3_ACCESS_KEY_ID)
+s3_secret=$(apienv FLUXER_S3_SECRET_ACCESS_KEY)
+s3_region=$(apienv FLUXER_S3_REGION)
 pg_password=$(grep -m1 '^POSTGRES_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
 
 echo "api image:   $api_image"
@@ -60,6 +68,11 @@ docker run -d --name fluxer-worker-lite --network "$NETWORK" --restart no \
 	-e FLUXER_INSTANCE_NAME="$instance_name" \
 	-e FLUXER_ADMIN_ENDPOINT="$admin_endpoint" \
 	-e CACHE_PURGE_ADAPTER="$cache_purge_adapter" \
+	-e FLUXER_S3_ENDPOINT="$s3_endpoint" \
+	-e FLUXER_S3_BUCKET_CDN="$s3_bucket" \
+	-e FLUXER_S3_ACCESS_KEY_ID="$s3_access" \
+	-e FLUXER_S3_SECRET_ACCESS_KEY="$s3_secret" \
+	-e FLUXER_S3_REGION="${s3_region:-us-east-1}" \
 	-e BUNDLE_CHECK_SEC="${BUNDLE_CHECK_SEC:-21600}" \
 	-e STATUS_ADDR=":${STATUS_PORT}" \
 	-e STATS_SEC="${STATS_SEC:-30}" \
