@@ -207,9 +207,9 @@ func taskNotifyRegistrationApprovers(ctx context.Context, payload map[string]any
 }
 
 type pendingEntry struct {
-	UserID     string `json:"user_id"`
-	Username   string `json:"username"`
-	GlobalName string `json:"global_name"`
+	UserID      string `json:"user_id"`
+	Username    string `json:"username"`
+	GlobalName  string `json:"global_name"`
 	RequestedAt string `json:"requested_at"`
 }
 

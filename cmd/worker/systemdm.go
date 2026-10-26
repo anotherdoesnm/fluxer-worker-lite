@@ -184,32 +184,32 @@ func ensureDMChannel(ctx context.Context, nc *nats.Conn, a, b string) (map[strin
 	channelID := ids[0]
 	now := time.Now().UTC()
 	row := map[string]any{
-		"channel_id":            bigintValue(channelID),
-		"type":                  dmChannelType,
-		"version":               1,
-		"soft_deleted":          false,
-		"guild_id":              nil,
-		"owner_id":              nil,
-		"name":                  nil,
-		"topic":                 nil,
-		"url":                   nil,
-		"nsfw":                  nil,
-		"nicks":                 nil,
-		"icon_hash":             nil,
-		"parent_id":             nil,
-		"position":              nil,
-		"bitrate":               nil,
-		"user_limit":            nil,
-		"rtc_region":            nil,
-		"rtc_p2p":               nil,
-		"rate_limit_per_user":   nil,
-		"permission_overwrites": nil,
+		"channel_id":             bigintValue(channelID),
+		"type":                   dmChannelType,
+		"version":                1,
+		"soft_deleted":           false,
+		"guild_id":               nil,
+		"owner_id":               nil,
+		"name":                   nil,
+		"topic":                  nil,
+		"url":                    nil,
+		"nsfw":                   nil,
+		"nicks":                  nil,
+		"icon_hash":              nil,
+		"parent_id":              nil,
+		"position":               nil,
+		"bitrate":                nil,
+		"user_limit":             nil,
+		"rtc_region":             nil,
+		"rtc_p2p":                nil,
+		"rate_limit_per_user":    nil,
+		"permission_overwrites":  nil,
 		"voice_connection_limit": nil,
-		"content_warning_text":  nil,
-		"content_warning_level": nil,
-		"indexed_at":            nil,
-		"last_message_id":       nil,
-		"last_pin_timestamp":    nil,
+		"content_warning_text":   nil,
+		"content_warning_level":  nil,
+		"indexed_at":             nil,
+		"last_message_id":        nil,
+		"last_pin_timestamp":     nil,
 		"recipient_ids": map[string]any{
 			"__fluxer_type": "set",
 			"value":         []any{bigintValue(a), bigintValue(b)},
@@ -226,9 +226,9 @@ func ensureDMChannel(ctx context.Context, nc *nats.Conn, a, b string) (map[strin
 	}
 	stateKey := bigintSeg(hi) + kvSep + bigintSeg(lo) + kvSep + bigintSeg(channelID)
 	state := map[string]any{
-		"channel_id":  bigintValue(channelID),
-		"hi_user_id":  bigintValue(hi),
-		"lo_user_id":  bigintValue(lo),
+		"channel_id": bigintValue(channelID),
+		"hi_user_id": bigintValue(hi),
+		"lo_user_id": bigintValue(lo),
 	}
 	if err := putKV(ctx, "dm_states", stateKey, stateKey, state, channelID); err != nil {
 		return nil, err
@@ -239,21 +239,21 @@ func ensureDMChannel(ctx context.Context, nc *nats.Conn, a, b string) (map[strin
 	for _, uid := range []string{a, b} {
 		pk := bigintSeg(uid) + kvSep + bigintSeg(channelID)
 		snapshot := map[string]any{
-			"user_id":                       bigintValue(uid),
-			"channel_id":                    bigintValue(channelID),
-			"is_gdm":                        false,
-			"snapshot_at":                   dateValue(now),
-			"channel_name":                  nil,
-			"channel_nsfw":                  nil,
-			"channel_type":                  dmChannelType,
-			"channel_nicks":                 nil,
-			"channel_version":               1,
-			"channel_owner_id":              nil,
-			"channel_icon_hash":             nil,
-			"channel_recipient_ids":         map[string]any{"__fluxer_type": "set", "value": []any{bigintValue(a), bigintValue(b)}},
-			"channel_last_message_id":       nil,
-			"channel_last_pin_timestamp":    nil,
-			"channel_rate_limit_per_user":   0,
+			"user_id":                     bigintValue(uid),
+			"channel_id":                  bigintValue(channelID),
+			"is_gdm":                      false,
+			"snapshot_at":                 dateValue(now),
+			"channel_name":                nil,
+			"channel_nsfw":                nil,
+			"channel_type":                dmChannelType,
+			"channel_nicks":               nil,
+			"channel_version":             1,
+			"channel_owner_id":            nil,
+			"channel_icon_hash":           nil,
+			"channel_recipient_ids":       map[string]any{"__fluxer_type": "set", "value": []any{bigintValue(a), bigintValue(b)}},
+			"channel_last_message_id":     nil,
+			"channel_last_pin_timestamp":  nil,
+			"channel_rate_limit_per_user": 0,
 		}
 		if err := putKV(ctx, "private_channels", pk, pk, snapshot, channelID); err != nil {
 			return nil, err
@@ -270,7 +270,23 @@ func ensureDMChannel(ctx context.Context, nc *nats.Conn, a, b string) (map[strin
 }
 
 // insertMessage writes the message row, its author index entry and the channel state row.
+// messageInsert describes one message row. Most callers write a plain user message;
+// the account deletion cascade also writes RECIPIENT_REMOVE notices, which differ
+// only in type and mentions.
+type messageInsert struct {
+	ChannelID    string
+	AuthorID     string
+	Content      string
+	Type         int
+	MentionUsers []string
+}
+
 func insertMessage(ctx context.Context, channelID, authorID, content string) (map[string]any, error) {
+	return insertMessageSpec(ctx, messageInsert{ChannelID: channelID, AuthorID: authorID, Content: content, Type: messageTypeUser})
+}
+
+func insertMessageSpec(ctx context.Context, spec messageInsert) (map[string]any, error) {
+	channelID, authorID, content := spec.ChannelID, spec.AuthorID, spec.Content
 	nc := workerNATS()
 	ids, err := snowflakeBatch(nc, 1)
 	if err != nil {
@@ -286,13 +302,23 @@ func insertMessage(ctx context.Context, channelID, authorID, content string) (ma
 		"message_id":       bigintValue(messageID),
 		"channel_id":       bigintValue(channelID),
 		"author_id":        bigintValue(authorID),
-		"content":          content,
-		"type":             messageTypeUser,
+		"content":          nil,
+		"type":             spec.Type,
 		"flags":            0,
 		"version":          1,
 		"bucket":           bucket,
 		"has_reaction":     false,
 		"mention_everyone": false,
+	}
+	if content != "" {
+		row["content"] = content
+	}
+	if len(spec.MentionUsers) > 0 {
+		set := make([]any, 0, len(spec.MentionUsers))
+		for _, id := range spec.MentionUsers {
+			set = append(set, map[string]any{"__fluxer_type": "bigint", "value": id})
+		}
+		row["mention_users"] = map[string]any{"__fluxer_type": "set", "value": set}
 	}
 	// partition_key is channel + bucket only; the message id belongs to row_key alone.
 	// Getting this wrong keeps the message readable by id but invisible in history.
