@@ -39,11 +39,11 @@ const (
 	// spec.go. Update it together with the task tables, never on its own. The
 	// published bundle carries no separate release number, so this is the api
 	// BUILD_VERSION of the image the tables were read from.
-	specRelease = "2026.1025.144746"
+	specRelease = "2026.1026.151750"
 	// specAPIDigest is the fluxer-api image that release ships.
-	specAPIDigest = "sha256:408429273dc8912d752d3e4582bc859a4e2dfe6c79f6ccfc3eea7e9cbcd7e538"
+	specAPIDigest = "sha256:57ab0af50711fd00a6b132b97863549c48db331a426b4e46aa8605b19eefa579"
 	// specAPIBuild is the BUILD_VERSION baked into that image.
-	specAPIBuild = "2026.1025.144746"
+	specAPIBuild = "2026.1026.151750"
 
 	defaultBundleURL = "https://fluxer.dev/compose/latest"
 )

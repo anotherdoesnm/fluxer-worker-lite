@@ -69,6 +69,8 @@ var lanes = []laneSpec{
 			"repairThreadIndexes", "deleteChannelThreads", "removeThreadMembershipsForGuildMember", "syncThreadSearchDocument",
 			"backfillThreadSearch", "backfillPasskeyTrait", "backfillUserAclIndex", "syncDiscoveryIndex",
 			"syncUrlBlocklists", "syncFileShaBlocklists", "flushUserActivityBuffer", "operatorPassSaleBroadcast",
+			// New in 2026.1026.151750, not ported yet: parked rather than unknown.
+			"backfillDeletedUsers", "backfillHiddenProfileBadges",
 			"operatorPassWaitlistCleanup", "operatorPassRemovalExpiry", "operatorPassOfferCompletion", "operatorPassWallRetention",
 		},
 	},
