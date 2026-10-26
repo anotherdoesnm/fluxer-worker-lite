@@ -442,9 +442,14 @@ func taskSendSystemDm(ctx context.Context, payload map[string]any) error {
 		}
 	}
 	if all, _ := payload["all_users"].(bool); all {
+		// The column is `bot`, not `is_bot`: with the wrong name the predicate was
+		// NULL for every row, so the "everyone" broadcast silently matched nobody.
+		// Deleted accounts are skipped too - their rows still exist, anonymised.
 		rows, err := db.QueryContext(ctx, `
 SELECT row_data->'user_id'->>'value' FROM fluxer_kv
-WHERE table_name = 'users' AND row_data->>'is_bot' <> 'true'`)
+WHERE table_name = 'users'
+  AND coalesce(row_data->>'bot', 'false') <> 'true'
+  AND (coalesce((row_data->'flags'->>'value')::bigint, 0) & 17179869184) = 0`)
 		if err != nil {
 			return err
 		}

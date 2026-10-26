@@ -951,6 +951,11 @@ func taskUserProcessPendingDeletion(ctx context.Context, payload map[string]any)
 	if err := anonymizeUserRecord(ctx, job.UserID, job.Reason); err != nil {
 		return fmt.Errorf("userProcessPendingDeletion: anonymise user: %w", err)
 	}
+	// A touch buffered before the deletion would otherwise be flushed into the
+	// anonymised row minutes later, putting the old IP back.
+	if err := valkey().HDel(ctx, userActivityKey, job.UserID).Err(); err != nil {
+		log.Printf("userProcessPendingDeletion: %s: drop buffered activity: %v", job.UserID, err)
+	}
 	log.Printf("userProcessPendingDeletion: %s: done guilds=%d group_dms=%d messages=%d assets=%d tokens=%d lookups=%d rows=%d",
 		job.UserID, leftGuilds, leftDms, messages, assets, tokens, lookups, rows)
 	return nil

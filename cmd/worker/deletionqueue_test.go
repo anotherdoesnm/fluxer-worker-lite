@@ -153,3 +153,54 @@ func TestIntFieldChecked(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePendingActivity(t *testing.T) {
+	good := []struct {
+		raw string
+		ts  int64
+		ip  string
+	}{
+		{`{"ts":1793024861212}`, 1793024861212, ""},
+		{`{"ts":1793024861212,"ip":"192.168.1.10"}`, 1793024861212, "192.168.1.10"},
+		{`{"ts":1,"ip":null}`, 1, ""},
+	}
+	for _, tc := range good {
+		e, ok := parsePendingActivity(tc.raw)
+		if !ok || e.TS != tc.ts {
+			t.Fatalf("%s: got %+v ok=%v", tc.raw, e, ok)
+		}
+		got := ""
+		if e.IP != nil {
+			got = *e.IP
+		}
+		if got != tc.ip {
+			t.Fatalf("%s: ip %q, want %q", tc.raw, got, tc.ip)
+		}
+	}
+	for _, bad := range []string{``, `null`, `{}`, `{"ts":0}`, `{"ts":-5}`, `not json`} {
+		if _, ok := parsePendingActivity(bad); ok {
+			t.Fatalf("%q: expected the entry to be rejected", bad)
+		}
+	}
+}
+
+// The buffer names sessions with base64url while auth_sessions stores standard
+// base64; getting this wrong makes every flush a silent no-op.
+func TestSessionHashFromBase64URL(t *testing.T) {
+	cases := map[string]string{
+		"7pEHi4PRSKHlpiw4989GQbWYhXw3UYLduNNJxqFNipI": "7pEHi4PRSKHlpiw4989GQbWYhXw3UYLduNNJxqFNipI=",
+		"nGK4hjDIdxOQCnOGYXFmjc-x3dNa5JJ7uTI7xbKlHY8": "nGK4hjDIdxOQCnOGYXFmjc+x3dNa5JJ7uTI7xbKlHY8=",
+		"qAMIm6Vjp7tMNAoRC_VldMyWk1OJjGIbzYhMekOsiD0": "qAMIm6Vjp7tMNAoRC/VldMyWk1OJjGIbzYhMekOsiD0=",
+	}
+	for in, want := range cases {
+		got, ok := sessionHashFromBase64URL(in)
+		if !ok || got != want {
+			t.Fatalf("%q: got %q (ok=%v), want %q", in, got, ok, want)
+		}
+	}
+	for _, bad := range []string{"", "!!!", "a"} {
+		if _, ok := sessionHashFromBase64URL(bad); ok {
+			t.Fatalf("%q: expected a rejection", bad)
+		}
+	}
+}

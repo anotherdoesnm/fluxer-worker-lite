@@ -450,6 +450,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"processAssetDeletionQueue":   taskProcessAssetDeletionQueue,
 	"userProcessPendingDeletions": taskUserProcessPendingDeletions,
 	"userProcessPendingDeletion":  taskUserProcessPendingDeletion,
+	"flushUserActivityBuffer":     taskFlushUserActivityBuffer,
 }
 
 // workerNC is the shared NATS connection. Handlers reach it through
