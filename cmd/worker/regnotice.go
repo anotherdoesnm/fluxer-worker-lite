@@ -119,6 +119,22 @@ LIMIT 1`).Scan(&raw); err != nil {
 	return ""
 }
 
+// resolveName retries briefly: the notice is queued at the same moment the account is
+// created, so for a moment neither users nor the approval queue knows the name yet.
+func resolveName(ctx context.Context, userID string) string {
+	for attempt := 0; attempt < 5; attempt++ {
+		if name := usernameOf(ctx, userID); name != "" {
+			return name
+		}
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-time.After(time.Second):
+		}
+	}
+	return ""
+}
+
 func registrationNoticeContent(ctx context.Context, userID string, waiting int) string {
 	base := strings.TrimRight(env("FLUXER_ADMIN_ENDPOINT", ""), "/")
 	tail := " in the admin panel."
@@ -129,7 +145,7 @@ func registrationNoticeContent(ctx context.Context, userID string, waiting int) 
 	if waiting > 1 {
 		more = fmt.Sprintf(" (%d waiting in total)", waiting)
 	}
-	if name := usernameOf(ctx, userID); name != "" {
+	if name := resolveName(ctx, userID); name != "" {
 		return name + " is waiting for approval" + more + ". Review pending registrations" + tail
 	}
 	return "New sign-ups are waiting for approval" + more + ". Review pending registrations" + tail
@@ -154,7 +170,11 @@ func taskNotifyRegistrationApprovers(ctx context.Context, payload map[string]any
 	for _, id := range reviewers {
 		key := regNoticeSubject + id
 		prev, err := kv.Get(ctx, key).Result()
-		if err != nil && err != redis.Nil {
+		if err == redis.Nil {
+			// No state yet is not the same as "queue is empty": an empty fingerprint
+			// would otherwise compare equal and swallow the very first notice.
+			prev = "<none>"
+		} else if err != nil {
 			return fmt.Errorf("notifyRegistrationApprovers: get %s: %w", key, err)
 		}
 		if prev == fingerprint {
