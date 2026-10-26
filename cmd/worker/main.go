@@ -446,6 +446,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"handleMentionChunk":  taskHandleMentionChunk,
 	"sendSystemDm":        taskSendSystemDm,
 	"notifyRegistrationApprovers": taskNotifyRegistrationApprovers,
+	"expireAttachments":           taskExpireAttachments,
 }
 
 // workerNC is the shared NATS connection. Handlers reach it through
