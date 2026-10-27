@@ -115,7 +115,7 @@ jobs:
             -c "select 'fluxer_kv columns: ' || count(*) from information_schema.columns where table_name = 'fluxer_kv'" \
             | tee -a "$log"
 
-          echo "== go test -run TestBatchConsecutiveMessageDeletesAgainstDB" | tee -a "$log"
+          echo "== go test -run AgainstDB (все тесты, которым нужна живая база)" | tee -a "$log"
           podman run --rm --network=host \
             -v "$PWD":/src:z -w /src \
             -v /srv/ci/go-cache/mod:/gomod:z \
@@ -124,5 +124,5 @@ jobs:
             -e FLUXER_TEST_PG_DSN="postgres://postgres:pw@127.0.0.1:$port/postgres?sslmode=disable" \
             "$GO_IMAGE" sh -c '
               set -eo pipefail
-              go test ./cmd/worker -run "TestBatchConsecutiveMessageDeletesAgainstDB" -count=1 -v
+              go test ./cmd/worker -run "AgainstDB" -count=1 -v
             ' 2>&1 | tee -a "$log"
