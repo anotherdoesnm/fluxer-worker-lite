@@ -143,4 +143,5 @@ func TestSeedThreadPermissionsAgainstDB(t *testing.T) {
 	body = pairs[0].([]any)[1].(map[string]any)
 	if typedString(body["allow_"]) != before {
 		t.Fatal("the second run rewrote the overwrite")
-	}}
+	}
+}
