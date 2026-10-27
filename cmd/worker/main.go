@@ -471,6 +471,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"prunePostgresKvTtl":                    taskPrunePostgresKvTtl,
 	"removeThreadMembershipsForGuildMember": taskRemoveThreadMembershipsForGuildMember,
 	"repairThreadIndexes":                   taskRepairThreadIndexes,
+	"seedThreadPermissions":                 taskSeedThreadPermissions,
 	"sendSystemDm":                          taskSendSystemDm,
 	"userProcessPendingDeletion":            taskUserProcessPendingDeletion,
 	"userProcessPendingDeletions":           taskUserProcessPendingDeletions,
