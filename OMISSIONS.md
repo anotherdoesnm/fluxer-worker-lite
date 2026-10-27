@@ -2,8 +2,8 @@
 
 State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **78 tasks**, of which 27 have handlers, 30 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **21 are parked**.
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which 28 have handlers, 30 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **20 are parked**.
 
 Two tests keep this table honest: `registry_test.go` reads this section and fails when a task listed
 here has no entry in `handlers[]`, and fails again when a handler names a task no lane publishes.
@@ -29,6 +29,7 @@ the work simply never happens until the handler exists.
 | `bulkDeleteSelfMessagesImmediate` | the person's own "delete my messages now" action: walks the author index, applies the scope/inclusion/window filter per channel, deletes through the shared bundle, dispatches `MESSAGE_DELETE_BULK` | filter and deletion are full ports (including `inaccessible_only`, which means "places the person already left"); **the completion notice is not sent** — upstream composes a localised system DM or email and this worker has no localisation |
 | `bulkDeleteMessagesForUsers` | admin sweep: collects each user's messages from the author index, queues one `messageShred` job per user with the api's payload and job key, writes one admin audit row per user and a summary row | deletion is owned by `messageShred` (already ported), so this task is collection plus queueing. **The enforcement-decision branch is not ported:** with an enforcement basis the api records a decision row first, and this worker has no decision writer |
 | `bulkBanFileShas` | bans a pasted list of SHA-256 hashes: one `banned_file_shas` row and one admin audit entry per hash, then a single Redis publish so every process reloads the blocklist, then a summary audit row | full port except the job progress feed; malformed hashes are counted and skipped, as the api's bulk runner does |
+| `bulkUpdateUserFlags` | admin sweep over users: adds/removes flags on each row, dispatches `USER_UPDATE` with the private object, one admin audit entry per user plus a summary | guards ported: removing `DELETED` is refused, as is removing `DISABLED` during a running ban. Not ported: the api's refusal of a restricted add-set and of removing feature-limit-held flags — both need the instance limit configuration |
 | `backfillPasskeyTrait` | one-shot: for every account that owns a *visible* WebAuthn credential the `passkey` trait is set, for the rest it is cleared, then the completion marker `backfill:passkey_trait:done` is written | idempotent and safe to re-run. **`USER_UPDATE` is not dispatched** (private user response not ported yet), so open clients see the trait on their next fetch; a partial user object in its place would look to the owner like a profile with fields missing |
 | `joinSingleCommunityMembers` | the paged run that puts every existing account into the single community guild: state and lock in valkey under `single_community:join_members*`, one page of 100 users per job, eligibility per the api's rule | cursor is the last user row key rather than the api's opaque page state, and the post-crash "rejoin" retry is not ported (a member that exists is counted and skipped, with a log line) |
 | `bulkAddGuildMembers` | admin sweep: adds a list of users to one guild — both member rows, the denormalised `member_count`, `GUILD_MEMBER_ADD` per user, one admin audit entry per user and a summary | not ported: the join message into the system channel and the welcome DM (no such machinery here). Users who must not be rendered are **skipped and counted**, see §3.2 |
@@ -94,6 +95,7 @@ crosspost job is ever produced.
 | `flushUserActivityBuffer` | the activity buffer is never flushed into the spool (the spool drain itself is implemented, but the `EVENTS` stream is missing) |
 | `expireReportSnapshots` | report snapshots are never pruned |
 | `processInactivityDeletions` | the 730-day inactivity deletion never runs (config is `off` anyway) |
+| `bulkUpdateUserFlags` | admin sweep over users: adds/removes flags on each row, dispatches `USER_UPDATE` with the private object, one admin audit entry per user plus a summary | guards ported: removing `DELETED` is refused, as is removing `DISABLED` during a running ban. Not ported: the api's refusal of a restricted add-set and of removing feature-limit-held flags — both need the instance limit configuration |
 | `backfillPasskeyTrait` | one-time passkey backfill for pre-passkey accounts |
 
 `processCachePurgeQueue` is **not** in this section: `FLUXER_CACHE_PURGE_ADAPTER` is unset, the default adapter is `none`, the API
@@ -111,6 +113,7 @@ deletion), must not appear under their real name.
 
 | omitted | reason | effect |
 |---|---|---|
+| private user object approximations | `account_tier`, `verification_need`, `nsfw_allowed`, `profile_restricted` and `date_of_birth_required` come from instance policy upstream; here they are derived from the row (verified when the email is confirmed or the account is a bot/system) | the owner's own card may show a slightly different tier than the api would compute; no field is missing from the object |
 | pseudonymous name for hidden users | upstream derives it by HMAC from `FLUXER_PROFILE_PSEUDONYM_SECRET` plus a word list that ships inside the api image; the worker has neither | a hidden user is not rendered at all: the caller skips the dispatch and logs it. No leak, but the client does not learn about that member until it refetches |
 | exact animated-avatar entitlement | comes from the instance limit configuration, which the worker does not read | a bot keeps its animation; a human keeps it only with premium. Worst case a static hash is shown instead of an animated one — cosmetic |
 
@@ -140,9 +143,9 @@ deletion), must not appear under their real name.
    deletion bundle has tests of its own.
 3. **Data export** — `harvestUserData`, `harvestGuildData`. They are the only tasks whose output
    leaves the machine, so they need the storage and archive path to be right first.
-4. **Admin bulk operations** — `bulkUpdateUserFlags`, `bulkScheduleUserDeletion`. Both still need
-   the *private* user response (`USER_UPDATE` carries the owner's own profile, not the partial one),
-   and the job-based ones also want the progress feed.
+4. **Admin bulk operations** — `bulkScheduleUserDeletion` (needs the same scheduling path the
+   single-user deletion uses, plus the private `USER_UPDATE` which now exists), and the job progress
+   feed the panel's live view wants.
 5. **Attachment and report maintenance** — `reconcileAttachmentDecay`, `expireReportSnapshots`,
    `backfillDeletedUsers`, `backfillHiddenProfileBadges` (the last two have no implementation in
    the extracted api bundle yet, so they need a fresh extraction before porting).

@@ -104,8 +104,8 @@ func isDeletedForDisplay(row map[string]any) bool {
 	return !b
 }
 
-// userPartialResponse renders the object clients receive for a user, or reports
-// that the user must not be rendered.
+// userPartialResponse renders the object other people receive for a user, or
+// reports that the user must not be rendered.
 func userPartialResponse(row map[string]any, now time.Time) (map[string]any, bool) {
 	if row == nil {
 		return nil, false
@@ -113,6 +113,12 @@ func userPartialResponse(row map[string]any, now time.Time) (map[string]any, boo
 	if isProfileHidden(row, now) {
 		return nil, false
 	}
+	return userOwnPartialResponse(row), true
+}
+
+// userOwnPartialResponse is the same object without the privacy mask: a person
+// always sees their own profile, even when it is hidden from everybody else.
+func userOwnPartialResponse(row map[string]any) map[string]any {
 	isBot, _ := row["bot"].(bool)
 	isSystem, _ := row["system"].(bool)
 	flags := userFlags(row)
@@ -133,7 +139,7 @@ func userPartialResponse(row map[string]any, now time.Time) (map[string]any, boo
 		if isSystem {
 			out["system"] = true
 		}
-		return out, true
+		return out
 	}
 
 	out := map[string]any{
@@ -154,7 +160,7 @@ func userPartialResponse(row map[string]any, now time.Time) (map[string]any, boo
 	if mf, ok := intFieldChecked(map[string]any{"v": row["mention_flags"]}, "v"); ok && mf != 0 {
 		out["mention_flags"] = mf
 	}
-	return out, true
+	return out
 }
 
 // publicUserFlags is PUBLIC_USER_FLAGS, minus STAFF when the staff badge is
