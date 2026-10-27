@@ -453,6 +453,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"deleteUserMessagesInGuildByTime":    taskDeleteUserMessagesInGuildByTime,
 	"drainActivitySpool":                 taskDrainActivitySpool,
 	"expireAttachments":                  taskExpireAttachments,
+	"expireReportSnapshots":              taskExpireReportSnapshots,
 	"expireStaleJobs":                    taskExpireStaleJobs,
 	"extractEmbeds":                      taskExtractEmbeds,
 	"flushUserActivityBuffer":            taskFlushUserActivityBuffer,
