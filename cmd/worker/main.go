@@ -450,6 +450,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"bulkUpdateGuildFeatures":            taskBulkUpdateGuildFeatures,
 	"bulkUpdateUserFlags":                taskBulkUpdateUserFlags,
 	"clearAuthenticatedReporterEmails":   taskClearAuthenticatedReporterEmails,
+	"deleteChannelThreads":               taskDeleteChannelThreads,
 	"deleteUserMessagesInGuildByTime":    taskDeleteUserMessagesInGuildByTime,
 	"drainActivitySpool":                 taskDrainActivitySpool,
 	"expireAttachments":                  taskExpireAttachments,
