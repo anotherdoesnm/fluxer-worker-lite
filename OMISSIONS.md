@@ -2,8 +2,8 @@
 
 State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **78 tasks**, of which 15 have handlers, 30 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **33 are parked**.
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which 16 have handlers, 30 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **32 are parked**.
 
 Two different things are listed here: whole tasks we do not run, and gaps *inside* the handlers we do run.
 A parked job is not lost — it is copied to `JOBS_PARKED` before the ack — except cron ticks, which are dropped
@@ -21,6 +21,7 @@ the work simply never happens until the handler exists.
 | `handleMentions` | asks the gateway who a message mentioned (`rpc.gateway.guild.resolve_mention_sources_page`, paged) and publishes `handleMentionChunk` jobs of 250 users | DM mentions are taken straight from the payload; thread scope is not ported (see §3) |
 | `handleMentionChunk` | per-user effect: `read_states.mention_count` +1 under the read-position guard, `recent_mentions` / `recent_mentions_by_guild` rows with a 7-day TTL, guild `suppress_everyone` / `suppress_roles` honoured | threads are written only if the payload says `thread: true`, which upstream sets through the thread scope |
 | `clearAuthenticatedReporterEmails` | erases the stored reporter email from `iar_submissions` rows that belong to an authenticated account | full port, paged by `report_id` like upstream; one failing row is counted and skipped, not fatal |
+| `messageShred` | deletes a hand-picked list of messages by one author (`messageShred` is the admin's "shred these" job), and reports progress in `message_shred_status:<job_id>` | full port of the per-message deletion bundle: `messages`, `messages_by_author_id_v2`, `channel_pins`, `message_reactions`, `attachment_lookup`, bucket stamps, S3 objects via the asset-deletion queue. Search documents and crosspost copies are not ported (no search backend, single community) |
 
 ## 2. Not implemented — 33 tasks
 
@@ -29,7 +30,6 @@ the work simply never happens until the handler exists.
 | task | what breaks without it |
 |---|---|
 | `userProcessPendingDeletion`, `userProcessPendingDeletions` | a user asks to delete their account; the request sits in the queue forever |
-| `messageShred` | messages that must disappear for good stay readable |
 | `guildProcessDeletion`, `applicationProcessDeletion` | deleting a guild/app leaves its rows behind |
 | `harvestUserData`, `harvestGuildData` | GDPR-style "export my data" requests never produce a file |
 
@@ -108,8 +108,22 @@ automatically if a purge adapter is ever configured.
 
 ## 5. Order I would port them in
 
-1. `userProcessPendingDeletion(s)` + `messageShred` — data rights, and the only gap a user can notice and complain about.
-2. `expireAttachments` + `reconcileAttachmentDecay` — the bucket only grows.
-3. `handleMentions` + `handleMentionChunk` — the last everyday UX feature.
-4. `sendSystemDm`, `notifyRegistrationApprovers` — small, and they unblock registration flows.
-5. Content moderation as **skip, not delete** (§3), if the blocklists are ever used.
+1. **Bulk message deletion** — `bulkDeleteSelfMessagesImmediate`, `bulkDeleteUserMessages`,
+   `deleteUserMessagesInGuildByTime`, `bulkDeleteMessagesForUsers`, `processPendingBulkMessageDeletions`.
+   They all sit on the deletion bundle that `messageShred` now owns, so each one is a payload and a
+   loop, not a new subsystem. The user row already carries `pending_bulk_message_deletion_*` fields
+   that the API fills and that nothing clears today.
+2. **Lifecycle deletions** — `guildProcessDeletion`, `applicationProcessDeletion`,
+   `processInactivityDeletions`. Deleting the wrong rows is unrecoverable, so they go after the
+   deletion bundle has tests of its own.
+3. **Data export** — `harvestUserData`, `harvestGuildData`. They are the only tasks whose output
+   leaves the machine, so they need the storage and archive path to be right first.
+4. **Admin bulk operations** — flags, features, members, file-sha bans, single-community join,
+   `liftExpiredGuildInvitePauses`. Mostly row patches with a gateway event; one routine each.
+5. **Attachment and report maintenance** — `reconcileAttachmentDecay`, `expireReportSnapshots`,
+   `backfillPasskeyTrait`, `backfillDeletedUsers`, `backfillHiddenProfileBadges`.
+6. **Threads** — `seedThreadPermissions`, `archiveInactiveThreads`, `repairThreadIndexes`,
+   `deleteChannelThreads`, `removeThreadMembershipsForGuildMember`. Needs the thread repository
+   ported as a whole, which is why it is not earlier.
+7. **Crosspost** — five tasks that only matter once a second guild follows a channel; a
+   single-community instance can never trigger them.

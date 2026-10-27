@@ -453,6 +453,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"flushUserActivityBuffer":          taskFlushUserActivityBuffer,
 	"batchGuildAuditLogMessageDeletes": taskBatchGuildAuditLogMessageDeletes,
 	"clearAuthenticatedReporterEmails": taskClearAuthenticatedReporterEmails,
+	"messageShred":                     taskMessageShred,
 }
 
 // workerNC is the shared NATS connection. Handlers reach it through
