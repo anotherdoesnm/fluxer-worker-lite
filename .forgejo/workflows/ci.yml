@@ -1,0 +1,128 @@
+name: ci
+
+# Что проверяется: формат, vet, сборка, юнит-тесты и — отдельным джобом — SQL-половина
+# batchGuildAuditLogMessageDeletes на одноразовом Postgres.
+#
+# Go в контейнере, а не на хосте: на warden его нет, а образ тот же
+# golang:1.24-alpine, которым собирается сам образ worker'а (Dockerfile). Так CI
+# проверяет ровно тот тулчейн, которым потом деплоим, и ничего не ставит на хост.
+#
+# Кэши в /srv/ci/go-cache: actions/checkout делает git clean, поэтому всё внутри
+# workspace между прогонами не выживает, а модули тянются из сети через узкий
+# домашний канал — их надо держать снаружи.
+#
+# `set -eo pipefail` — не украшение: без `-e` упавшая команда в конвейере даёт
+# зелёный джоб, который ничего не собрал (разбор в Chrysalis #75).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_IMAGE: docker.io/library/golang:1.24-alpine
+
+jobs:
+  unit:
+    runs-on: warden
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: формат, vet, сборка, юнит-тесты
+        run: |
+          set -eo pipefail
+          mkdir -p /srv/ci/ci-logs /srv/ci/go-cache/mod /srv/ci/go-cache/build
+          log=/srv/ci/ci-logs/worker-lite-unit.log
+          : > "$log"
+          podman run --rm \
+            -v "$PWD":/src:z -w /src \
+            -v /srv/ci/go-cache/mod:/gomod:z \
+            -v /srv/ci/go-cache/build:/gocache:z \
+            -e GOMODCACHE=/gomod -e GOCACHE=/gocache -e GOFLAGS=-mod=mod \
+            "$GO_IMAGE" sh -c '
+              set -eo pipefail
+              echo "== gofmt"
+              out=$(gofmt -l .)
+              if [ -n "$out" ]; then
+                echo "эти файлы не отформатированы:"; echo "$out"; exit 1
+              fi
+              echo "== go vet"
+              go vet ./...
+              echo "== go build"
+              go build ./...
+              echo "== go test (FLUXER_TEST_PG_DSN не задан, база пропускается)"
+              go test ./... -count=1
+            ' 2>&1 | tee "$log"
+
+  pg:
+    needs: unit
+    runs-on: warden
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: SQL-половина batching-задачи на одноразовой базе
+        # Тест сам пропускается, если FLUXER_TEST_PG_DSN пуст, поэтому без этого
+        # джоба он не проверялся бы никогда. Схему берём из testdata/fluxer_kv.sql —
+        # это снятый с живого инстанса DDL той единственной таблицы, в которую
+        # пишет задача.
+        run: |
+          set -eo pipefail
+          mkdir -p /srv/ci/ci-logs /srv/ci/go-cache/mod /srv/ci/go-cache/build
+          log=/srv/ci/ci-logs/worker-lite-pg.log
+          : > "$log"
+
+          suffix=$RANDOM
+          pg=wl-pg-$suffix
+          cleanup() { podman rm -f "$pg" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          # Порт публикуется на loopback хоста, а тест идёт с --network=host:
+          # rootless podman здесь без aardvark-dns, поэтому резолвить имя
+          # контейнера нечем, а 127.0.0.1 работает всегда.
+          echo "== одноразовый Postgres" | tee -a "$log"
+          podman run -d --name "$pg" -p 127.0.0.1::5432 \
+            -e POSTGRES_PASSWORD=pw -e POSTGRES_HOST_AUTH_METHOD=password \
+            docker.io/library/postgres:17-alpine >/dev/null
+
+          ready=0
+          for _ in $(seq 1 60); do
+            if podman exec "$pg" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+              ready=1; break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "ОШИБКА: Postgres не поднялся за 60 с" >&2
+            podman logs "$pg" 2>&1 | tail -30 | tee -a "$log"
+            exit 1
+          fi
+
+          port=$(podman port "$pg" 5432/tcp | head -1 | sed 's/.*://')
+          echo "порт на loopback: $port" | tee -a "$log"
+
+          podman cp testdata/fluxer_kv.sql "$pg":/tmp/schema.sql
+          podman exec -e PGPASSWORD=pw "$pg" \
+            psql -q -U postgres -d postgres -v ON_ERROR_STOP=1 -f /tmp/schema.sql >>"$log" 2>&1
+          podman exec -e PGPASSWORD=pw "$pg" \
+            psql -t -U postgres -d postgres \
+            -c "select 'fluxer_kv columns: ' || count(*) from information_schema.columns where table_name = 'fluxer_kv'" \
+            | tee -a "$log"
+
+          echo "== go test -run TestBatchConsecutiveMessageDeletesAgainstDB" | tee -a "$log"
+          podman run --rm --network=host \
+            -v "$PWD":/src:z -w /src \
+            -v /srv/ci/go-cache/mod:/gomod:z \
+            -v /srv/ci/go-cache/build:/gocache:z \
+            -e GOMODCACHE=/gomod -e GOCACHE=/gocache -e GOFLAGS=-mod=mod \
+            -e FLUXER_TEST_PG_DSN="postgres://postgres:pw@127.0.0.1:$port/postgres?sslmode=disable" \
+            "$GO_IMAGE" sh -c '
+              set -eo pipefail
+              go test ./cmd/worker -run "TestBatchConsecutiveMessageDeletesAgainstDB" -count=1 -v
+            ' 2>&1 | tee -a "$log"
