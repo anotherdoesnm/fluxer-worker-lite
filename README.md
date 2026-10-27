@@ -1,11 +1,14 @@
 # worker-lite
 
 A Go replacement for the Fluxer `worker` service, written against the wire
-contract of Fluxer API release `2026.1025.35621` rather than against its source
+contract of Fluxer API release `2026.1026.151750` rather than against its source
 tree: the same JetStream subjects (`jobs.<task>`), the same envelope
 (`{payload, run_at, created_at}`), the same consumers, heartbeats and dead-letter
-subject, but ~15 MB RSS instead of ~180 MB, which is what makes a 1 GiB
-instance viable.
+subject, but **4–10 MiB RSS instead of 185 MiB** — measured, see `bench/`.
+
+It is not a drop-in replacement: it implements 48 of the 78 tasks and ignores 30 on
+purpose, with a reason for each. `REPLACING-NODE-WORKER.md` is the operator document —
+what is covered, when the gaps matter, how to switch, verify and roll back.
 
 It is not a reimplementation of Fluxer. It is the background-job half: whatever
 this worker does not implement is parked in a separate stream instead of being
@@ -18,7 +21,10 @@ lost, and `OMISSIONS.md` lists exactly what is missing.
 | `cmd/worker` | the worker: lanes, task policy, handlers, `/status` |
 | `cmd/observer` | read-only peek into the job stream (never acks, never competes) |
 | `deploy.sh` | deploy against the running api container, pass it the api identity |
+| `docker-compose.worker-lite.yml` | the same service, for a stock compose stack |
 | `wl-status.sh` | human summary of `/status` |
+| `bench/` | `bench.sh`: node worker vs worker-lite, isolated broker, memory table |
+| `REPLACING-NODE-WORKER.md` | operator guide: coverage, switch, verify, upgrade, rollback |
 | `OMISSIONS.md` | what is not ported, and what breaks because of it |
 
 ## Design rules
