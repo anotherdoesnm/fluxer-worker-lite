@@ -457,9 +457,9 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"bulkDeleteUserMessages":             taskBulkDeleteUserMessages,
 	"processPendingBulkMessageDeletions": taskProcessPendingBulkMessageDeletions,
 	"deleteUserMessagesInGuildByTime":    taskDeleteUserMessagesInGuildByTime,
-	"liftExpiredGuildInvitePauses":      taskLiftExpiredGuildInvitePauses,
-	"bulkUpdateGuildFeatures":           taskBulkUpdateGuildFeatures,
-	"bulkBanFileShas":                   taskBulkBanFileShas,
+	"liftExpiredGuildInvitePauses":       taskLiftExpiredGuildInvitePauses,
+	"bulkUpdateGuildFeatures":            taskBulkUpdateGuildFeatures,
+	"bulkBanFileShas":                    taskBulkBanFileShas,
 }
 
 // workerNC is the shared NATS connection. Handlers reach it through

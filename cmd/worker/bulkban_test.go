@@ -27,8 +27,8 @@ func TestApplyFileShaBansAgainstDB(t *testing.T) {
 	conn := openTestDB(t)
 	ctx := context.Background()
 
-	valid := strings.Repeat("ab", 32)   // 64 hex chars
-	mixed := strings.ToUpper(valid)     // same hash, different case: must collapse
+	valid := strings.Repeat("ab", 32) // 64 hex chars
+	mixed := strings.ToUpper(valid)   // same hash, different case: must collapse
 	invalid := "not-a-hash"
 	admin := "860000000000000001"
 
