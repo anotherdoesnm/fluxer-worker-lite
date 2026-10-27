@@ -439,6 +439,7 @@ func parkJob(js nats.JetStreamContext, parkPrefix, lane string, m *nats.Msg, tas
 // to the parked stream, keep it) and ignore (feature off, drop with a reason).
 var handlers = map[string]func(context.Context, map[string]any) error{
 	"batchGuildAuditLogMessageDeletes":   taskBatchGuildAuditLogMessageDeletes,
+	"bulkAddGuildMembers":                taskBulkAddGuildMembers,
 	"bulkBanFileShas":                    taskBulkBanFileShas,
 	"bulkDeleteMessagesForUsers":         taskBulkDeleteMessagesForUsers,
 	"bulkDeleteSelfMessagesImmediate":    taskBulkDeleteSelfMessagesImmediate,

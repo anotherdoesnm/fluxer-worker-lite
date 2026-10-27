@@ -2,8 +2,8 @@
 
 State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **78 tasks**, of which 24 have handlers, 30 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **24 are parked**.
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which 25 have handlers, 30 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **23 are parked**.
 
 Two tests keep this table honest: `registry_test.go` reads this section and fails when a task listed
 here has no entry in `handlers[]`, and fails again when a handler names a task no lane publishes.
@@ -29,6 +29,7 @@ the work simply never happens until the handler exists.
 | `bulkDeleteSelfMessagesImmediate` | the person's own "delete my messages now" action: walks the author index, applies the scope/inclusion/window filter per channel, deletes through the shared bundle, dispatches `MESSAGE_DELETE_BULK` | filter and deletion are full ports (including `inaccessible_only`, which means "places the person already left"); **the completion notice is not sent** — upstream composes a localised system DM or email and this worker has no localisation |
 | `bulkDeleteMessagesForUsers` | admin sweep: collects each user's messages from the author index, queues one `messageShred` job per user with the api's payload and job key, writes one admin audit row per user and a summary row | deletion is owned by `messageShred` (already ported), so this task is collection plus queueing. **The enforcement-decision branch is not ported:** with an enforcement basis the api records a decision row first, and this worker has no decision writer |
 | `bulkBanFileShas` | bans a pasted list of SHA-256 hashes: one `banned_file_shas` row and one admin audit entry per hash, then a single Redis publish so every process reloads the blocklist, then a summary audit row | full port except the job progress feed; malformed hashes are counted and skipped, as the api's bulk runner does |
+| `bulkAddGuildMembers` | admin sweep: adds a list of users to one guild — both member rows, the denormalised `member_count`, `GUILD_MEMBER_ADD` per user, one admin audit entry per user and a summary | not ported: the join message into the system channel and the welcome DM (no such machinery here). Users who must not be rendered are **skipped and counted**, see §3.2 |
 | `bulkUpdateGuildFeatures` | admin sweep: adds/removes features on a list of guilds, `GUILD_UPDATE` per guild, guild audit entry, one admin audit summary row | full port except the job progress feed the admin panel uses (no job-progress writer yet); removal wins when a feature is on both sides, as upstream |
 | `deleteUserMessagesInGuildByTime` | part of a guild ban: deletes what the person wrote inside the ban window (the last `seconds`) across the guild's channels | full port for channels; **threads are not walked**, so a thread message survives a ban until the thread repository is ported |
 | `processPendingBulkMessageDeletions` | cron that turns due members of the `bulk_message_deletion_queue` sorted set into `bulkDeleteUserMessages` jobs | full port, including the state-version marker and rebuild lock: valkey is a cache, the user rows are the truth |
@@ -100,6 +101,17 @@ one of the 31 ignored tasks, and `deploy.sh` now passes the API's real adapter v
 automatically if a purge adapter is ever configured.
 
 ## 3. Gaps inside the ported handlers
+
+### 3.2 User and member rendering (`userresponse.go`, `memberresponse.go`)
+
+The gateway payloads embed a user object, and a user object has a privacy rule: a person who set
+`PROFILE_HIDDEN`, or who is under enforcement (spammer flag, temporary ban, pending enforcement
+deletion), must not appear under their real name.
+
+| omitted | reason | effect |
+|---|---|---|
+| pseudonymous name for hidden users | upstream derives it by HMAC from `FLUXER_PROFILE_PSEUDONYM_SECRET` plus a word list that ships inside the api image; the worker has neither | a hidden user is not rendered at all: the caller skips the dispatch and logs it. No leak, but the client does not learn about that member until it refetches |
+| exact animated-avatar entitlement | comes from the instance limit configuration, which the worker does not read | a bot keeps its animation; a human keeps it only with premium. Worst case a static hash is shown instead of an animated one — cosmetic |
 
 ### 3.1 `handleMentions` / `handleMentionChunk`
 
