@@ -2,8 +2,8 @@
 
 State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **78 tasks**, of which 25 have handlers, 30 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **23 are parked**.
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which 26 have handlers, 30 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **22 are parked**.
 
 Two tests keep this table honest: `registry_test.go` reads this section and fails when a task listed
 here has no entry in `handlers[]`, and fails again when a handler names a task no lane publishes.
@@ -29,6 +29,7 @@ the work simply never happens until the handler exists.
 | `bulkDeleteSelfMessagesImmediate` | the person's own "delete my messages now" action: walks the author index, applies the scope/inclusion/window filter per channel, deletes through the shared bundle, dispatches `MESSAGE_DELETE_BULK` | filter and deletion are full ports (including `inaccessible_only`, which means "places the person already left"); **the completion notice is not sent** — upstream composes a localised system DM or email and this worker has no localisation |
 | `bulkDeleteMessagesForUsers` | admin sweep: collects each user's messages from the author index, queues one `messageShred` job per user with the api's payload and job key, writes one admin audit row per user and a summary row | deletion is owned by `messageShred` (already ported), so this task is collection plus queueing. **The enforcement-decision branch is not ported:** with an enforcement basis the api records a decision row first, and this worker has no decision writer |
 | `bulkBanFileShas` | bans a pasted list of SHA-256 hashes: one `banned_file_shas` row and one admin audit entry per hash, then a single Redis publish so every process reloads the blocklist, then a summary audit row | full port except the job progress feed; malformed hashes are counted and skipped, as the api's bulk runner does |
+| `joinSingleCommunityMembers` | the paged run that puts every existing account into the single community guild: state and lock in valkey under `single_community:join_members*`, one page of 100 users per job, eligibility per the api's rule | cursor is the last user row key rather than the api's opaque page state, and the post-crash "rejoin" retry is not ported (a member that exists is counted and skipped, with a log line) |
 | `bulkAddGuildMembers` | admin sweep: adds a list of users to one guild — both member rows, the denormalised `member_count`, `GUILD_MEMBER_ADD` per user, one admin audit entry per user and a summary | not ported: the join message into the system channel and the welcome DM (no such machinery here). Users who must not be rendered are **skipped and counted**, see §3.2 |
 | `bulkUpdateGuildFeatures` | admin sweep: adds/removes features on a list of guilds, `GUILD_UPDATE` per guild, guild audit entry, one admin audit summary row | full port except the job progress feed the admin panel uses (no job-progress writer yet); removal wins when a feature is on both sides, as upstream |
 | `deleteUserMessagesInGuildByTime` | part of a guild ban: deletes what the person wrote inside the ban window (the last `seconds`) across the guild's channels | full port for channels; **threads are not walked**, so a thread message survives a ban until the thread repository is ported |
@@ -93,7 +94,6 @@ crosspost job is ever produced.
 | `expireReportSnapshots` | report snapshots are never pruned |
 | `processInactivityDeletions` | the 730-day inactivity deletion never runs (config is `off` anyway) |
 | `backfillPasskeyTrait` | one-time passkey backfill for pre-passkey accounts |
-| `joinSingleCommunityMembers` | single-community mode is ON, but the task is a one-shot backfill the API starts by writing `single_community:join_members_run`; the cron is now gated per tick on that key (absent right now, so it does not tick), and if a run does start the tick is parked until the handler exists |
 
 `processCachePurgeQueue` is **not** in this section: `FLUXER_CACHE_PURGE_ADAPTER` is unset, the default adapter is `none`, the API
 wires `NoopPurgeQueue` so nothing is ever queued, and upstream's own cron is not registered in that case either. It is
@@ -139,10 +139,9 @@ deletion), must not appear under their real name.
    deletion bundle has tests of its own.
 3. **Data export** — `harvestUserData`, `harvestGuildData`. They are the only tasks whose output
    leaves the machine, so they need the storage and archive path to be right first.
-4. **Admin bulk operations** — `bulkUpdateUserFlags`, `bulkAddGuildMembers`,
-   `bulkScheduleUserDeletion`, `joinSingleCommunityMembers`. All four need the user/member response
-   mapper (`USER_UPDATE`, `GUILD_MEMBER_ADD`), which is the next piece of infrastructure; the
-   job-based ones also want the progress feed.
+4. **Admin bulk operations** — `bulkUpdateUserFlags`, `bulkScheduleUserDeletion`. Both still need
+   the *private* user response (`USER_UPDATE` carries the owner's own profile, not the partial one),
+   and the job-based ones also want the progress feed.
 5. **Attachment and report maintenance** — `reconcileAttachmentDecay`, `expireReportSnapshots`,
    `backfillPasskeyTrait`, `backfillDeletedUsers`, `backfillHiddenProfileBadges`.
 6. **Threads** — `seedThreadPermissions`, `archiveInactiveThreads`, `repairThreadIndexes`,

@@ -454,6 +454,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"flushUserActivityBuffer":            taskFlushUserActivityBuffer,
 	"handleMentionChunk":                 taskHandleMentionChunk,
 	"handleMentions":                     taskHandleMentions,
+	"joinSingleCommunityMembers":         taskJoinSingleCommunityMembers,
 	"liftExpiredGuildInvitePauses":       taskLiftExpiredGuildInvitePauses,
 	"messageShred":                       taskMessageShred,
 	"notifyRegistrationApprovers":        taskNotifyRegistrationApprovers,
