@@ -440,6 +440,7 @@ func parkJob(js nats.JetStreamContext, parkPrefix, lane string, m *nats.Msg, tas
 var handlers = map[string]func(context.Context, map[string]any) error{
 	"applicationProcessDeletion":            taskApplicationProcessDeletion,
 	"archiveInactiveThreads":                taskArchiveInactiveThreads,
+	"backfillDeletedUsers":                  taskBackfillDeletedUsers,
 	"backfillHiddenProfileBadges":           taskBackfillHiddenProfileBadges,
 	"backfillPasskeyTrait":                  taskBackfillPasskeyTrait,
 	"batchGuildAuditLogMessageDeletes":      taskBatchGuildAuditLogMessageDeletes,
