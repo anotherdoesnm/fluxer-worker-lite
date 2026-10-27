@@ -13,13 +13,10 @@ package main
 // feature change is recorded in the guild audit log (action 1, SYSTEM user), and
 // the member leaves the set.
 //
-// What is not done here, and why:
-//   - GUILD_UPDATE is not dispatched. Upstream sends the whole mapped guild
-//     response, and this worker has no guild response mapper yet; sending a
-//     partial object would be worse than sending nothing, because clients cache
-//     it. Open clients pick the change up on the next GUILD_CREATE.
-//   - emitGuildFeaturesChanged is not published: the EVENTS stream it writes to
-//     does not exist on this instance (same reason drainActivitySpool is a no-op).
+// What is not done here: emitGuildFeaturesChanged is not published, because the
+// EVENTS stream it writes to does not exist on this instance (the same reason
+// drainActivitySpool is a no-op). GUILD_UPDATE *is* dispatched, with the mapped
+// guild response, so open clients see the features change without reconnecting.
 
 import (
 	"context"
@@ -128,7 +125,16 @@ func liftGuildInvitePause(ctx context.Context, guildID string, now time.Time) (b
 	if err := patchGuildInvitePause(ctx, rowKey, featuresValue); err != nil {
 		return false, fmt.Errorf("patch guild: %w", err)
 	}
-	if err := recordInvitePauseLift(ctx, guildID, features, kept); err != nil {
+	if nc := workerNATS(); nc != nil {
+		if updated, err := readKV(ctx, guildsTable, rowKey); err != nil {
+			log.Printf("liftExpiredGuildInvitePauses: guild %s: re-read for dispatch: %v", guildID, err)
+		} else if updated != nil {
+			if err := dispatchGuild(nc, guildID, "GUILD_UPDATE", guildResponse(updated)); err != nil {
+				log.Printf("liftExpiredGuildInvitePauses: guild %s: dispatch: %v (change applied)", guildID, err)
+			}
+		}
+	}
+	if err := recordGuildFeatureChange(ctx, guildID, features, kept); err != nil {
 		// The change is applied; a missing audit row must not undo it.
 		log.Printf("liftExpiredGuildInvitePauses: guild %s: audit log: %v (change applied)", guildID, err)
 	}
@@ -150,10 +156,10 @@ WHERE table_name = $1 AND row_key = $3`, guildsTable, string(body), rowKey)
 	return err
 }
 
-// recordInvitePauseLift appends the GUILD_UPDATE audit entry the api writes when
-// the pause changes. The changes array carries the feature diff, which is the
-// only part the api keeps for this action.
-func recordInvitePauseLift(ctx context.Context, guildID string, before, after []string) error {
+// recordGuildFeatureChange appends the GUILD_UPDATE audit entry the api writes when
+// a guild's features change (an invite pause is one such change, a bulk feature
+// edit is another). The changes array carries the feature diff.
+func recordGuildFeatureChange(ctx context.Context, guildID string, before, after []string) error {
 	logID, err := nextSnowflakeID()
 	if err != nil {
 		return err

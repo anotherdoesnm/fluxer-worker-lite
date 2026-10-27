@@ -2,8 +2,8 @@
 
 State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **78 tasks**, of which 20 have handlers, 30 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **28 are parked**.
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which 21 have handlers, 30 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **27 are parked**.
 
 Two different things are listed here: whole tasks we do not run, and gaps *inside* the handlers we do run.
 A parked job is not lost — it is copied to `JOBS_PARKED` before the ack — except cron ticks, which are dropped
@@ -22,7 +22,8 @@ the work simply never happens until the handler exists.
 | `handleMentionChunk` | per-user effect: `read_states.mention_count` +1 under the read-position guard, `recent_mentions` / `recent_mentions_by_guild` rows with a 7-day TTL, guild `suppress_everyone` / `suppress_roles` honoured | threads are written only if the payload says `thread: true`, which upstream sets through the thread scope |
 | `clearAuthenticatedReporterEmails` | erases the stored reporter email from `iar_submissions` rows that belong to an authenticated account | full port, paged by `report_id` like upstream; one failing row is counted and skipped, not fatal |
 | `bulkDeleteUserMessages` | deletes a person's own messages up to the moment they asked for, then clears `pending_bulk_message_deletion_{at,channel_count,message_count}` | full port; walks `messages_by_author_id_v2` and reuses the per-message deletion bundle |
-| `liftExpiredGuildInvitePauses` | closes an expired invite pause: removes `INVITES_DISABLED`/`RAID_DETECTED` from the guild row, clears `invites_paused_until`, records the change in the guild audit log | row and audit log are full ports; **GUILD_UPDATE is not dispatched** (no guild response mapper yet, and a partial object would poison client caches) and the features-changed event is not published (no `EVENTS` stream on this instance) |
+| `liftExpiredGuildInvitePauses` | closes an expired invite pause: removes `INVITES_DISABLED`/`RAID_DETECTED` from the guild row, clears `invites_paused_until`, records the change in the guild audit log and dispatches `GUILD_UPDATE` | full port except the features-changed event (no `EVENTS` stream on this instance) |
+| `bulkUpdateGuildFeatures` | admin sweep: adds/removes features on a list of guilds, `GUILD_UPDATE` per guild, guild audit entry, one admin audit summary row | full port except the job progress feed the admin panel uses (no job-progress writer yet); removal wins when a feature is on both sides, as upstream |
 | `deleteUserMessagesInGuildByTime` | part of a guild ban: deletes what the person wrote inside the ban window (the last `seconds`) across the guild's channels | full port for channels; **threads are not walked**, so a thread message survives a ban until the thread repository is ported |
 | `processPendingBulkMessageDeletions` | cron that turns due members of the `bulk_message_deletion_queue` sorted set into `bulkDeleteUserMessages` jobs | full port, including the state-version marker and rebuild lock: valkey is a cache, the user rows are the truth |
 | `messageShred` | deletes a hand-picked list of messages by one author (`messageShred` is the admin's "shred these" job), and reports progress in `message_shred_status:<job_id>` | full port of the per-message deletion bundle: `messages`, `messages_by_author_id_v2`, `channel_pins`, `message_reactions`, `attachment_lookup`, bucket stamps, S3 objects via the asset-deletion queue. Search documents and crosspost copies are not ported (no search backend, single community) |
@@ -120,10 +121,11 @@ automatically if a purge adapter is ever configured.
    deletion bundle has tests of its own.
 3. **Data export** — `harvestUserData`, `harvestGuildData`. They are the only tasks whose output
    leaves the machine, so they need the storage and archive path to be right first.
-4. **Admin bulk operations** — `bulkUpdateUserFlags`, `bulkUpdateGuildFeatures`,
-   `bulkAddGuildMembers`, `bulkBanFileShas`, `bulkScheduleUserDeletion`, `joinSingleCommunityMembers`,
-   `bulkDeleteSelfMessagesImmediate`, `bulkDeleteMessagesForUsers`. Mostly row patches, but most of
-   them also emit a gateway event, so they wait for the response mappers.
+4. **Admin bulk operations** — `bulkUpdateUserFlags`, `bulkAddGuildMembers`, `bulkBanFileShas`,
+   `bulkScheduleUserDeletion`, `joinSingleCommunityMembers`, `bulkDeleteSelfMessagesImmediate`,
+   `bulkDeleteMessagesForUsers`. The guild response mapper and the admin audit writer now exist, so
+   what is missing per task is the user/member response mapper and, for the job-based ones, the
+   progress feed.
 5. **Attachment and report maintenance** — `reconcileAttachmentDecay`, `expireReportSnapshots`,
    `backfillPasskeyTrait`, `backfillDeletedUsers`, `backfillHiddenProfileBadges`.
 6. **Threads** — `seedThreadPermissions`, `archiveInactiveThreads`, `repairThreadIndexes`,
