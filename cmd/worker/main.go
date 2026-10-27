@@ -466,6 +466,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"guildProcessDeletion":                  taskGuildProcessDeletion,
 	"handleMentionChunk":                    taskHandleMentionChunk,
 	"handleMentions":                        taskHandleMentions,
+	"harvestUserData":                       taskHarvestUserData,
 	"joinSingleCommunityMembers":            taskJoinSingleCommunityMembers,
 	"liftExpiredGuildInvitePauses":          taskLiftExpiredGuildInvitePauses,
 	"messageShred":                          taskMessageShred,
