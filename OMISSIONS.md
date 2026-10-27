@@ -2,8 +2,11 @@
 
 State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **78 tasks**, of which 21 have handlers, 30 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **27 are parked**.
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which 22 have handlers, 30 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **26 are parked**.
+
+Two tests keep this table honest: `registry_test.go` reads this section and fails when a task listed
+here has no entry in `handlers[]`, and fails again when a handler names a task no lane publishes.
 
 Two different things are listed here: whole tasks we do not run, and gaps *inside* the handlers we do run.
 A parked job is not lost — it is copied to `JOBS_PARKED` before the ack — except cron ticks, which are dropped
@@ -23,6 +26,7 @@ the work simply never happens until the handler exists.
 | `clearAuthenticatedReporterEmails` | erases the stored reporter email from `iar_submissions` rows that belong to an authenticated account | full port, paged by `report_id` like upstream; one failing row is counted and skipped, not fatal |
 | `bulkDeleteUserMessages` | deletes a person's own messages up to the moment they asked for, then clears `pending_bulk_message_deletion_{at,channel_count,message_count}` | full port; walks `messages_by_author_id_v2` and reuses the per-message deletion bundle |
 | `liftExpiredGuildInvitePauses` | closes an expired invite pause: removes `INVITES_DISABLED`/`RAID_DETECTED` from the guild row, clears `invites_paused_until`, records the change in the guild audit log and dispatches `GUILD_UPDATE` | full port except the features-changed event (no `EVENTS` stream on this instance) |
+| `bulkBanFileShas` | bans a pasted list of SHA-256 hashes: one `banned_file_shas` row and one admin audit entry per hash, then a single Redis publish so every process reloads the blocklist, then a summary audit row | full port except the job progress feed; malformed hashes are counted and skipped, as the api's bulk runner does |
 | `bulkUpdateGuildFeatures` | admin sweep: adds/removes features on a list of guilds, `GUILD_UPDATE` per guild, guild audit entry, one admin audit summary row | full port except the job progress feed the admin panel uses (no job-progress writer yet); removal wins when a feature is on both sides, as upstream |
 | `deleteUserMessagesInGuildByTime` | part of a guild ban: deletes what the person wrote inside the ban window (the last `seconds`) across the guild's channels | full port for channels; **threads are not walked**, so a thread message survives a ban until the thread repository is ported |
 | `processPendingBulkMessageDeletions` | cron that turns due members of the `bulk_message_deletion_queue` sorted set into `bulkDeleteUserMessages` jobs | full port, including the state-version marker and rebuild lock: valkey is a cache, the user rows are the truth |
@@ -121,7 +125,7 @@ automatically if a purge adapter is ever configured.
    deletion bundle has tests of its own.
 3. **Data export** — `harvestUserData`, `harvestGuildData`. They are the only tasks whose output
    leaves the machine, so they need the storage and archive path to be right first.
-4. **Admin bulk operations** — `bulkUpdateUserFlags`, `bulkAddGuildMembers`, `bulkBanFileShas`,
+4. **Admin bulk operations** — `bulkUpdateUserFlags`, `bulkAddGuildMembers`,
    `bulkScheduleUserDeletion`, `joinSingleCommunityMembers`, `bulkDeleteSelfMessagesImmediate`,
    `bulkDeleteMessagesForUsers`. The guild response mapper and the admin audit writer now exist, so
    what is missing per task is the user/member response mapper and, for the job-based ones, the
