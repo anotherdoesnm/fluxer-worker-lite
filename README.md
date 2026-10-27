@@ -22,6 +22,7 @@ lost, and `OMISSIONS.md` lists exactly what is missing.
 | `cmd/observer` | read-only peek into the job stream (never acks, never competes) |
 | `deploy.sh` | deploy against the running api container, pass it the api identity |
 | `docker-compose.worker-lite.yml` | the same service, for a stock compose stack |
+| `publish.sh` | tag with the spec release and push to a registry, or write a loadable tarball |
 | `wl-status.sh` | human summary of `/status` |
 | `bench/` | `bench.sh`: node worker vs worker-lite, isolated broker, memory table |
 | `REPLACING-NODE-WORKER.md` | operator guide: coverage, switch, verify, upgrade, rollback |

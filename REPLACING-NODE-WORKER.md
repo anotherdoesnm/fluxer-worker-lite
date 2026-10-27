@@ -21,6 +21,21 @@ has turned on:
 Everything else — message lifecycle, bulk operations, threads, guild and user
 deletion, data exports, crosspost, report and attachment maintenance — is ported.
 
+## Getting the image
+
+Three ways, in order of what an operator usually has:
+
+1. **Build from this repository** — `docker build -t fluxer-worker-lite:dev .`.
+2. **Load a tarball** — `gunzip -c worker-lite-<release>.tar.gz | docker load`. This is
+   how the release for this instance is shipped (8.7 MiB compressed, 21 MiB loaded).
+3. **Push to your registry** — `sh publish.sh registry.example/fluxer-worker-lite`
+   tags it with the spec release and `latest` and pushes both. Pushing needs a token
+   with **package write**; a repository-scoped token answers
+   `unauthorized: reqPackageAccess` even when the login itself succeeded.
+
+The image is a static binary on Alpine: no shell, no package manager, 20 MiB. That is
+also why the compose file has no container healthcheck — probe `/status` from the host.
+
 ## The two workers are mutually exclusive
 
 Both consume the **same** JetStream subjects (`jobs.<task>`) on the **same** workqueue
