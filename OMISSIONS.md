@@ -2,8 +2,8 @@
 
 State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **78 tasks**, of which 18 have handlers, 30 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **30 are parked**.
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which 19 have handlers, 30 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **29 are parked**.
 
 Two different things are listed here: whole tasks we do not run, and gaps *inside* the handlers we do run.
 A parked job is not lost — it is copied to `JOBS_PARKED` before the ack — except cron ticks, which are dropped
@@ -22,6 +22,7 @@ the work simply never happens until the handler exists.
 | `handleMentionChunk` | per-user effect: `read_states.mention_count` +1 under the read-position guard, `recent_mentions` / `recent_mentions_by_guild` rows with a 7-day TTL, guild `suppress_everyone` / `suppress_roles` honoured | threads are written only if the payload says `thread: true`, which upstream sets through the thread scope |
 | `clearAuthenticatedReporterEmails` | erases the stored reporter email from `iar_submissions` rows that belong to an authenticated account | full port, paged by `report_id` like upstream; one failing row is counted and skipped, not fatal |
 | `bulkDeleteUserMessages` | deletes a person's own messages up to the moment they asked for, then clears `pending_bulk_message_deletion_{at,channel_count,message_count}` | full port; walks `messages_by_author_id_v2` and reuses the per-message deletion bundle |
+| `deleteUserMessagesInGuildByTime` | part of a guild ban: deletes what the person wrote inside the ban window (the last `seconds`) across the guild's channels | full port for channels; **threads are not walked**, so a thread message survives a ban until the thread repository is ported |
 | `processPendingBulkMessageDeletions` | cron that turns due members of the `bulk_message_deletion_queue` sorted set into `bulkDeleteUserMessages` jobs | full port, including the state-version marker and rebuild lock: valkey is a cache, the user rows are the truth |
 | `messageShred` | deletes a hand-picked list of messages by one author (`messageShred` is the admin's "shred these" job), and reports progress in `message_shred_status:<job_id>` | full port of the per-message deletion bundle: `messages`, `messages_by_author_id_v2`, `channel_pins`, `message_reactions`, `attachment_lookup`, bucket stamps, S3 objects via the asset-deletion queue. Search documents and crosspost copies are not ported (no search backend, single community) |
 
@@ -72,7 +73,7 @@ crosspost job is ever produced.
 
 `bulkUpdateUserFlags`, `bulkUpdateGuildFeatures`, `bulkAddGuildMembers`, `bulkBanFileShas`,
 `bulkScheduleUserDeletion`, `bulkDeleteSelfMessagesImmediate`,
-`bulkDeleteMessagesForUsers`, `deleteUserMessagesInGuildByTime`,
+`bulkDeleteMessagesForUsers`,
 `batchGuildAuditLogMessageDeletes` — the admin panel reports success, the queue holds the job, nothing happens.
 
 ### 2.7 Activity, caches, reports, misc
@@ -110,10 +111,9 @@ automatically if a purge adapter is ever configured.
 
 ## 5. Order I would port them in
 
-1. **Bulk message deletion** — `bulkDeleteSelfMessagesImmediate`, `deleteUserMessagesInGuildByTime`,
-   `bulkDeleteMessagesForUsers`. Same deletion bundle, different filters: the first is the person's
-   own request with a channel/date filter, the second is scoped to one guild, the third is an admin
-   sweep over several users with an audit-log summary.
+1. **Bulk message deletion** — `bulkDeleteSelfMessagesImmediate` (the person's own request with a
+   channel/date filter) and `bulkDeleteMessagesForUsers` (an admin sweep over several users with an
+   audit-log summary). Same deletion bundle, different filters.
 2. **Lifecycle deletions** — `guildProcessDeletion`, `applicationProcessDeletion`,
    `processInactivityDeletions`. Deleting the wrong rows is unrecoverable, so they go after the
    deletion bundle has tests of its own.

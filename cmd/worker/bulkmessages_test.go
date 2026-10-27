@@ -165,3 +165,88 @@ func TestBulkDeleteUserMessagesAgainstDB(t *testing.T) {
 		t.Fatal("the patch rewrote unrelated user fields")
 	}
 }
+
+func TestDeleteUserMessagesInGuildByTimeAgainstDB(t *testing.T) {
+	conn := openTestDB(t)
+	ctx := context.Background()
+
+	const (
+		guildID   = "830000000000000001"
+		channelID = "830000000000000002"
+		userID    = "830000000000000003"
+		otherID   = "830000000000000004"
+	)
+	nowMS := time.Now().UTC().UnixMilli()
+	recentID := snowflakeID(nowMS - 60*1000)    // one minute ago: inside the window
+	oldID := snowflakeID(nowMS - 48*60*60*1000) // two days ago: outside
+	otherMsgID := snowflakeID(nowMS - 90*1000)  // recent too, but somebody else wrote it
+
+	// The guild's channel index.
+	guildKey := bigintSeg(guildID) + kvSep + bigintSeg(channelID)
+	if err := putKV(ctx, "channels_by_guild_id", guildKey, guildKey, map[string]any{
+		"guild_id":   kvBigintJSON(guildID),
+		"channel_id": kvBigintJSON(channelID),
+	}, ""); err != nil {
+		t.Fatalf("seed guild index: %v", err)
+	}
+
+	seedMessage := func(authorID, messageID string) {
+		partition, key, bucket := messageKeys(channelID, messageID)
+		if err := putKV(ctx, messagesTable, partition, key, map[string]any{
+			"channel_id": kvBigintJSON(channelID),
+			"message_id": kvBigintJSON(messageID),
+			"author_id":  kvBigintJSON(authorID),
+			"bucket":     bucket,
+			"content":    "msg " + messageID,
+		}, messageID); err != nil {
+			t.Fatalf("seed message %s: %v", messageID, err)
+		}
+		if err := putKV(ctx, messagesByAuthor, bigintSeg(authorID)+kvSep+bigintSeg(messageID),
+			bigintSeg(authorID)+kvSep+bigintSeg(messageID), map[string]any{
+				"author_id":  kvBigintJSON(authorID),
+				"channel_id": kvBigintJSON(channelID),
+				"message_id": kvBigintJSON(messageID),
+			}, ""); err != nil {
+			t.Fatalf("seed author index %s: %v", messageID, err)
+		}
+	}
+	seedMessage(userID, recentID)
+	seedMessage(userID, oldID)
+	seedMessage(otherID, otherMsgID)
+
+	t.Cleanup(func() {
+		_, _ = conn.Exec(`DELETE FROM fluxer_kv WHERE table_name = 'channels_by_guild_id' AND row_key = $1`, guildKey)
+		for _, id := range []string{recentID, oldID, otherMsgID} {
+			_, _ = conn.Exec(`DELETE FROM fluxer_kv WHERE row_key LIKE '%' || $1 || '%'`, bigintSeg(id))
+		}
+	})
+
+	// A one-hour window: the recent message is in, the two-day-old one is out.
+	if err := taskDeleteUserMessagesInGuildByTime(ctx, map[string]any{
+		"guildId": guildID,
+		"userId":  userID,
+		"seconds": float64(3600),
+	}); err != nil {
+		t.Fatalf("task: %v", err)
+	}
+
+	exists := func(t *testing.T, messageID string) bool {
+		t.Helper()
+		_, key, _ := messageKeys(channelID, messageID)
+		var n int
+		if err := conn.QueryRow(`SELECT count(*) FROM fluxer_kv WHERE table_name = $1 AND row_key = $2`,
+			messagesTable, key).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", messageID, err)
+		}
+		return n > 0
+	}
+	if exists(t, recentID) {
+		t.Fatal("a message inside the ban window survived")
+	}
+	if !exists(t, oldID) {
+		t.Fatal("a message older than the window was deleted")
+	}
+	if !exists(t, otherMsgID) {
+		t.Fatal("another author's message was deleted")
+	}
+}

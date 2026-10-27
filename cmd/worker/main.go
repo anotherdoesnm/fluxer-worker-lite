@@ -456,6 +456,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"messageShred":                       taskMessageShred,
 	"bulkDeleteUserMessages":             taskBulkDeleteUserMessages,
 	"processPendingBulkMessageDeletions": taskProcessPendingBulkMessageDeletions,
+	"deleteUserMessagesInGuildByTime":    taskDeleteUserMessagesInGuildByTime,
 }
 
 // workerNC is the shared NATS connection. Handlers reach it through

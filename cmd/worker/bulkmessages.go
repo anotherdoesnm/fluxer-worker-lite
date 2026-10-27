@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -475,4 +476,134 @@ LIMIT $3`, prefix, cursor, bulkScanPageSize)
 		cursor = lastKey
 	}
 	return out, nil
+}
+
+// ---------- deleteUserMessagesInGuildByTime ----------
+
+// taskDeleteUserMessagesInGuildByTime ports DeleteUserMessagesInGuildByTime.ts:
+// part of a guild ban, it removes everything this person wrote in the ban window
+// (the last `seconds`), leaving older messages alone. Note the direction: the api
+// filters `msg.id > cutoffSnowflake`, so it is the recent messages that go, not
+// the old ones.
+//
+// Threads are not walked: this instance has no thread channels, and the thread
+// repository is not ported yet (see the thread tasks). A thread message would
+// therefore survive a ban, which is recorded in OMISSIONS.md rather than left
+// implicit.
+func taskDeleteUserMessagesInGuildByTime(ctx context.Context, payload map[string]any) error {
+	if db == nil {
+		if err := openDB(); err != nil {
+			return fmt.Errorf("deleteUserMessagesInGuildByTime: %w", err)
+		}
+	}
+	guildID := stringField(payload, "guildId")
+	userID := stringField(payload, "userId")
+	seconds := intField(payload, "seconds")
+	if !isDigits(guildID) || !isDigits(userID) || seconds < 0 {
+		return fmt.Errorf("deleteUserMessagesInGuildByTime: guildId, userId and seconds are required")
+	}
+	cutoff := time.Now().UTC().Add(-time.Duration(seconds) * time.Second).UnixMilli()
+
+	channels, err := guildChannelIDs(ctx, guildID)
+	if err != nil {
+		return fmt.Errorf("deleteUserMessagesInGuildByTime: list channels: %w", err)
+	}
+	total := 0
+	for _, channelID := range channels {
+		deleted, err := deleteUserMessagesInChannelWindow(ctx, channelID, userID, cutoff)
+		if err != nil {
+			return fmt.Errorf("deleteUserMessagesInGuildByTime: channel %s: %w", channelID, err)
+		}
+		total += deleted
+	}
+	log.Printf("deleteUserMessagesInGuildByTime: guild=%s user=%s seconds=%d deleted=%d",
+		guildID, userID, seconds, total)
+	return nil
+}
+
+// guildChannelIDs reads channels_by_guild_id, whose row key is
+// "<guild>\x1f<channel>".
+func guildChannelIDs(ctx context.Context, guildID string) ([]string, error) {
+	prefix := bigintSeg(guildID) + kvSep
+	rows, err := db.QueryContext(ctx, `
+SELECT row_data->'channel_id'->>'value' FROM fluxer_kv
+WHERE table_name = 'channels_by_guild_id' AND left(row_key, length($1)) = $1
+ORDER BY row_key`, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var channelID sql.NullString
+		if err := rows.Scan(&channelID); err != nil {
+			return nil, err
+		}
+		if channelID.Valid && isDigits(channelID.String) {
+			out = append(out, channelID.String)
+		}
+	}
+	return out, rows.Err()
+}
+
+// deleteUserMessagesInChannelWindow walks one channel's messages and deletes the
+// author's messages newer than the cutoff. Messages live in per-bucket
+// partitions, so the scan is by partition prefix and the time filter happens in
+// Go; at this instance's size that is a handful of rows, and it avoids inventing
+// a bucket-to-time mapping the api does not have.
+func deleteUserMessagesInChannelWindow(ctx context.Context, channelID, userID string, cutoffMS int64) (int, error) {
+	prefix := bigintSeg(channelID) + kvSep
+	rows, err := db.QueryContext(ctx, `
+SELECT row_data::text FROM fluxer_kv
+WHERE table_name = $1 AND left(partition_key, length($2)) = $2
+ORDER BY row_key`, messagesTable, prefix)
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		var row map[string]any
+		if err := json.Unmarshal([]byte(raw), &row); err != nil {
+			continue
+		}
+		if typedString(row["author_id"]) != userID {
+			continue
+		}
+		messageID := typedString(row["message_id"])
+		id, err := strconv.ParseInt(messageID, 10, 64)
+		if err != nil {
+			continue
+		}
+		if snowflakeTime(id).UnixMilli() <= cutoffMS {
+			continue
+		}
+		ids = append(ids, messageID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	deleted := 0
+	var gone []string
+	for _, id := range ids {
+		existed, err := deleteMessageRow(ctx, channelID, id)
+		if err != nil {
+			return deleted, err
+		}
+		if existed {
+			deleted++
+			gone = append(gone, id)
+		}
+	}
+	if len(gone) > 0 {
+		dispatchBulkDelete(ctx, channelID, gone)
+	}
+	return deleted, nil
 }
