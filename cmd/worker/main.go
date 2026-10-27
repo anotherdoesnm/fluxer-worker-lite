@@ -438,6 +438,7 @@ func parkJob(js nats.JetStreamContext, parkPrefix, lane string, m *nats.Msg, tas
 // here is not silently skipped: taskPolicy() decides between park (copy the job
 // to the parked stream, keep it) and ignore (feature off, drop with a reason).
 var handlers = map[string]func(context.Context, map[string]any) error{
+	"applicationProcessDeletion":         taskApplicationProcessDeletion,
 	"backfillPasskeyTrait":               taskBackfillPasskeyTrait,
 	"batchGuildAuditLogMessageDeletes":   taskBatchGuildAuditLogMessageDeletes,
 	"bulkAddGuildMembers":                taskBulkAddGuildMembers,

@@ -2,8 +2,8 @@
 
 State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **78 tasks**, of which 29 have handlers, 30 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **19 are parked**.
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which 30 have handlers, 30 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **18 are parked**.
 
 Two tests keep this table honest: `registry_test.go` reads this section and fails when a task listed
 here has no entry in `handlers[]`, and fails again when a handler names a task no lane publishes.
@@ -29,6 +29,7 @@ the work simply never happens until the handler exists.
 | `bulkDeleteSelfMessagesImmediate` | the person's own "delete my messages now" action: walks the author index, applies the scope/inclusion/window filter per channel, deletes through the shared bundle, dispatches `MESSAGE_DELETE_BULK` | filter and deletion are full ports (including `inaccessible_only`, which means "places the person already left"); **the completion notice is not sent** — upstream composes a localised system DM or email and this worker has no localisation |
 | `bulkDeleteMessagesForUsers` | admin sweep: collects each user's messages from the author index, queues one `messageShred` job per user with the api's payload and job key, writes one admin audit row per user and a summary row | deletion is owned by `messageShred` (already ported), so this task is collection plus queueing. **The enforcement-decision branch is not ported:** with an enforcement basis the api records a decision row first, and this worker has no decision writer |
 | `bulkBanFileShas` | bans a pasted list of SHA-256 hashes: one `banned_file_shas` row and one admin audit entry per hash, then a single Redis publish so every process reloads the blocklist, then a summary audit row | full port except the job progress feed; malformed hashes are counted and skipped, as the api's bulk runner does |
+| `applicationProcessDeletion` | retires the bot behind a deleted OAuth2 application: anonymises the account in place (`DeletedUser`, `0000`, no assets, `DELETED`), sends `GUILD_MEMBER_UPDATE` to every guild it is still in, then removes the application and its owner index | order is deliberate — a crash halfway leaves an explainable anonymised bot, not an ownerless account with no record |
 | `bulkScheduleUserDeletion` | admin sweep: closes a batch of accounts with a grace period — flags, `pending_deletion_at`, reason code, author, valkey queue member, session/token revocation, private `USER_UPDATE`, per-user admin audit and a summary | not ported: the **enforcement basis** (it needs a decision writer; the basis is refused up front), the notification email, and subscription cancellation (nothing to cancel without payments) |
 | `bulkUpdateUserFlags` | admin sweep over users: adds/removes flags on each row, dispatches `USER_UPDATE` with the private object, one admin audit entry per user plus a summary | guards ported: removing `DELETED` is refused, as is removing `DISABLED` during a running ban. Not ported: the api's refusal of a restricted add-set and of removing feature-limit-held flags — both need the instance limit configuration |
 | `backfillPasskeyTrait` | one-shot: for every account that owns a *visible* WebAuthn credential the `passkey` trait is set, for the rest it is cleared, then the completion marker `backfill:passkey_trait:done` is written | idempotent and safe to re-run. **`USER_UPDATE` is not dispatched** (private user response not ported yet), so open clients see the trait on their next fetch; a partial user object in its place would look to the owner like a profile with fields missing |
@@ -96,6 +97,7 @@ crosspost job is ever produced.
 | `flushUserActivityBuffer` | the activity buffer is never flushed into the spool (the spool drain itself is implemented, but the `EVENTS` stream is missing) |
 | `expireReportSnapshots` | report snapshots are never pruned |
 | `processInactivityDeletions` | the 730-day inactivity deletion never runs (config is `off` anyway) |
+| `applicationProcessDeletion` | retires the bot behind a deleted OAuth2 application: anonymises the account in place (`DeletedUser`, `0000`, no assets, `DELETED`), sends `GUILD_MEMBER_UPDATE` to every guild it is still in, then removes the application and its owner index | order is deliberate — a crash halfway leaves an explainable anonymised bot, not an ownerless account with no record |
 | `bulkScheduleUserDeletion` | admin sweep: closes a batch of accounts with a grace period — flags, `pending_deletion_at`, reason code, author, valkey queue member, session/token revocation, private `USER_UPDATE`, per-user admin audit and a summary | not ported: the **enforcement basis** (it needs a decision writer; the basis is refused up front), the notification email, and subscription cancellation (nothing to cancel without payments) |
 | `bulkUpdateUserFlags` | admin sweep over users: adds/removes flags on each row, dispatches `USER_UPDATE` with the private object, one admin audit entry per user plus a summary | guards ported: removing `DELETED` is refused, as is removing `DISABLED` during a running ban. Not ported: the api's refusal of a restricted add-set and of removing feature-limit-held flags — both need the instance limit configuration |
 | `backfillPasskeyTrait` | one-time passkey backfill for pre-passkey accounts |
@@ -140,8 +142,7 @@ deletion), must not appear under their real name.
 1. **Bulk message deletion** — `bulkDeleteSelfMessagesImmediate` (the person's own request with a
    channel/date filter) and `bulkDeleteMessagesForUsers` (an admin sweep over several users with an
    audit-log summary). Same deletion bundle, different filters.
-2. **Lifecycle deletions** — `guildProcessDeletion`, `applicationProcessDeletion`,
-   `processInactivityDeletions`. Deleting the wrong rows is unrecoverable, so they go after the
+2. **Lifecycle deletions** — `guildProcessDeletion`, `processInactivityDeletions`. Deleting the wrong rows is unrecoverable, so they go after the
    deletion bundle has tests of its own.
 3. **Data export** — `harvestUserData`, `harvestGuildData`. They are the only tasks whose output
    leaves the machine, so they need the storage and archive path to be right first.
