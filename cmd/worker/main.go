@@ -480,6 +480,8 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"repairThreadIndexes":                   taskRepairThreadIndexes,
 	"seedThreadPermissions":                 taskSeedThreadPermissions,
 	"sendSystemDm":                          taskSendSystemDm,
+	"syncCrosspostCopies":                   taskSyncCrosspostCopies,
+	"syncCrosspostedMessage":                taskSyncCrosspostedMessage,
 	"userProcessPendingDeletion":            taskUserProcessPendingDeletion,
 	"userProcessPendingDeletions":           taskUserProcessPendingDeletions,
 }
