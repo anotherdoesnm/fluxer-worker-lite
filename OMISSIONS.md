@@ -2,8 +2,8 @@
 
 State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **78 tasks**, of which 22 have handlers, 30 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **26 are parked**.
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which 23 have handlers, 30 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **25 are parked**.
 
 Two tests keep this table honest: `registry_test.go` reads this section and fails when a task listed
 here has no entry in `handlers[]`, and fails again when a handler names a task no lane publishes.
@@ -26,6 +26,7 @@ the work simply never happens until the handler exists.
 | `clearAuthenticatedReporterEmails` | erases the stored reporter email from `iar_submissions` rows that belong to an authenticated account | full port, paged by `report_id` like upstream; one failing row is counted and skipped, not fatal |
 | `bulkDeleteUserMessages` | deletes a person's own messages up to the moment they asked for, then clears `pending_bulk_message_deletion_{at,channel_count,message_count}` | full port; walks `messages_by_author_id_v2` and reuses the per-message deletion bundle |
 | `liftExpiredGuildInvitePauses` | closes an expired invite pause: removes `INVITES_DISABLED`/`RAID_DETECTED` from the guild row, clears `invites_paused_until`, records the change in the guild audit log and dispatches `GUILD_UPDATE` | full port except the features-changed event (no `EVENTS` stream on this instance) |
+| `bulkDeleteMessagesForUsers` | admin sweep: collects each user's messages from the author index, queues one `messageShred` job per user with the api's payload and job key, writes one admin audit row per user and a summary row | deletion is owned by `messageShred` (already ported), so this task is collection plus queueing. **The enforcement-decision branch is not ported:** with an enforcement basis the api records a decision row first, and this worker has no decision writer |
 | `bulkBanFileShas` | bans a pasted list of SHA-256 hashes: one `banned_file_shas` row and one admin audit entry per hash, then a single Redis publish so every process reloads the blocklist, then a summary audit row | full port except the job progress feed; malformed hashes are counted and skipped, as the api's bulk runner does |
 | `bulkUpdateGuildFeatures` | admin sweep: adds/removes features on a list of guilds, `GUILD_UPDATE` per guild, guild audit entry, one admin audit summary row | full port except the job progress feed the admin panel uses (no job-progress writer yet); removal wins when a feature is on both sides, as upstream |
 | `deleteUserMessagesInGuildByTime` | part of a guild ban: deletes what the person wrote inside the ban window (the last `seconds`) across the guild's channels | full port for channels; **threads are not walked**, so a thread message survives a ban until the thread repository is ported |
@@ -126,10 +127,10 @@ automatically if a purge adapter is ever configured.
 3. **Data export** — `harvestUserData`, `harvestGuildData`. They are the only tasks whose output
    leaves the machine, so they need the storage and archive path to be right first.
 4. **Admin bulk operations** — `bulkUpdateUserFlags`, `bulkAddGuildMembers`,
-   `bulkScheduleUserDeletion`, `joinSingleCommunityMembers`, `bulkDeleteSelfMessagesImmediate`,
-   `bulkDeleteMessagesForUsers`. The guild response mapper and the admin audit writer now exist, so
-   what is missing per task is the user/member response mapper and, for the job-based ones, the
-   progress feed.
+   `bulkScheduleUserDeletion`, `joinSingleCommunityMembers`, `bulkDeleteSelfMessagesImmediate`.
+   What is missing now is the user/member response mapper (for `USER_UPDATE` and `GUILD_MEMBER_ADD`)
+   and, for the job-based ones, the progress feed. `bulkDeleteSelfMessagesImmediate` needs neither,
+   only the channel-eligibility rules for DMs and group DMs.
 5. **Attachment and report maintenance** — `reconcileAttachmentDecay`, `expireReportSnapshots`,
    `backfillPasskeyTrait`, `backfillDeletedUsers`, `backfillHiddenProfileBadges`.
 6. **Threads** — `seedThreadPermissions`, `archiveInactiveThreads`, `repairThreadIndexes`,
