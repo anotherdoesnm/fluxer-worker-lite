@@ -466,6 +466,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"processAssetDeletionQueue":          taskProcessAssetDeletionQueue,
 	"processPendingBulkMessageDeletions": taskProcessPendingBulkMessageDeletions,
 	"prunePostgresKvTtl":                 taskPrunePostgresKvTtl,
+	"repairThreadIndexes":                taskRepairThreadIndexes,
 	"sendSystemDm":                       taskSendSystemDm,
 	"userProcessPendingDeletion":         taskUserProcessPendingDeletion,
 	"userProcessPendingDeletions":        taskUserProcessPendingDeletions,

@@ -2,8 +2,8 @@
 
 State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **78 tasks**, of which 31 have handlers, 30 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **17 are parked**.
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which 32 have handlers, 30 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **16 are parked**.
 
 Two tests keep this table honest: `registry_test.go` reads this section and fails when a task listed
 here has no entry in `handlers[]`, and fails again when a handler names a task no lane publishes.
@@ -29,6 +29,7 @@ the work simply never happens until the handler exists.
 | `bulkDeleteSelfMessagesImmediate` | the person's own "delete my messages now" action: walks the author index, applies the scope/inclusion/window filter per channel, deletes through the shared bundle, dispatches `MESSAGE_DELETE_BULK` | filter and deletion are full ports (including `inaccessible_only`, which means "places the person already left"); **the completion notice is not sent** — upstream composes a localised system DM or email and this worker has no localisation |
 | `bulkDeleteMessagesForUsers` | admin sweep: collects each user's messages from the author index, queues one `messageShred` job per user with the api's payload and job key, writes one admin audit row per user and a summary row | deletion is owned by `messageShred` (already ported), so this task is collection plus queueing. **The enforcement-decision branch is not ported:** with an enforcement basis the api records a decision row first, and this worker has no decision writer |
 | `bulkBanFileShas` | bans a pasted list of SHA-256 hashes: one `banned_file_shas` row and one admin audit entry per hash, then a single Redis publish so every process reloads the blocklist, then a summary audit row | full port except the job progress feed; malformed hashes are counted and skipped, as the api's bulk runner does |
+| `repairThreadIndexes` | re-derives the three denormalised thread indexes (`active_threads_by_guild`, `threads_by_parent`, `archived_threads_by_parent`) from the thread's own state row; an archived thread loses its active row | no gateway dispatch (clients learn from the next thread list fetch). Known encoding risk: the archive timestamp segment of an archived row is written as an ISO string, which may not match the api's segment form — active threads are unaffected |
 | `expireReportSnapshots` | report retention: a resolved report expires after the configured year (a year and a half for child safety, longer while a decision references it), a report whose copied context has aged out keeps its row and loses the context, a legal hold overrides both, and evidence shared with a surviving report is never deleted | `FLUXER_REPORT_RETENTION_DAYS` / `_DRY_RUN` are honoured. Not ported: the S3 listing of stray `reports/<id>/profile/` objects (only rows' own keys are deletable here) and the search-index update |
 | `applicationProcessDeletion` | retires the bot behind a deleted OAuth2 application: anonymises the account in place (`DeletedUser`, `0000`, no assets, `DELETED`), sends `GUILD_MEMBER_UPDATE` to every guild it is still in, then removes the application and its owner index | order is deliberate — a crash halfway leaves an explainable anonymised bot, not an ownerless account with no record |
 | `bulkScheduleUserDeletion` | admin sweep: closes a batch of accounts with a grace period — flags, `pending_deletion_at`, reason code, author, valkey queue member, session/token revocation, private `USER_UPDATE`, per-user admin audit and a summary | not ported: the **enforcement basis** (it needs a decision writer; the basis is refused up front), the notification email, and subscription cancellation (nothing to cancel without payments) |
@@ -96,8 +97,10 @@ crosspost job is ever produced.
 | task | what breaks |
 |---|---|
 | `flushUserActivityBuffer` | the activity buffer is never flushed into the spool (the spool drain itself is implemented, but the `EVENTS` stream is missing) |
+| `repairThreadIndexes` | re-derives the three denormalised thread indexes (`active_threads_by_guild`, `threads_by_parent`, `archived_threads_by_parent`) from the thread's own state row; an archived thread loses its active row | no gateway dispatch (clients learn from the next thread list fetch). Known encoding risk: the archive timestamp segment of an archived row is written as an ISO string, which may not match the api's segment form — active threads are unaffected |
 | `expireReportSnapshots` | report snapshots are never pruned |
 | `processInactivityDeletions` | the 730-day inactivity deletion never runs (config is `off` anyway) |
+| `repairThreadIndexes` | re-derives the three denormalised thread indexes (`active_threads_by_guild`, `threads_by_parent`, `archived_threads_by_parent`) from the thread's own state row; an archived thread loses its active row | no gateway dispatch (clients learn from the next thread list fetch). Known encoding risk: the archive timestamp segment of an archived row is written as an ISO string, which may not match the api's segment form — active threads are unaffected |
 | `expireReportSnapshots` | report retention: a resolved report expires after the configured year (a year and a half for child safety, longer while a decision references it), a report whose copied context has aged out keeps its row and loses the context, a legal hold overrides both, and evidence shared with a surviving report is never deleted | `FLUXER_REPORT_RETENTION_DAYS` / `_DRY_RUN` are honoured. Not ported: the S3 listing of stray `reports/<id>/profile/` objects (only rows' own keys are deletable here) and the search-index update |
 | `applicationProcessDeletion` | retires the bot behind a deleted OAuth2 application: anonymises the account in place (`DeletedUser`, `0000`, no assets, `DELETED`), sends `GUILD_MEMBER_UPDATE` to every guild it is still in, then removes the application and its owner index | order is deliberate — a crash halfway leaves an explainable anonymised bot, not an ownerless account with no record |
 | `bulkScheduleUserDeletion` | admin sweep: closes a batch of accounts with a grace period — flags, `pending_deletion_at`, reason code, author, valkey queue member, session/token revocation, private `USER_UPDATE`, per-user admin audit and a summary | not ported: the **enforcement basis** (it needs a decision writer; the basis is refused up front), the notification email, and subscription cancellation (nothing to cancel without payments) |
@@ -153,8 +156,8 @@ deletion), must not appear under their real name.
 5. **Attachment and report maintenance** — `reconcileAttachmentDecay`, and the two backfills
    `backfillDeletedUsers` / `backfillHiddenProfileBadges`, which have no implementation in the
    extracted api bundle yet and need a fresh extraction before porting.
-6. **Threads** — `seedThreadPermissions`, `archiveInactiveThreads`, `repairThreadIndexes`,
-   `deleteChannelThreads`, `removeThreadMembershipsForGuildMember`. Needs the thread repository
-   ported as a whole, which is why it is not earlier.
+6. **Threads** — `seedThreadPermissions`, `archiveInactiveThreads`, `deleteChannelThreads`,
+   `removeThreadMembershipsForGuildMember`. The index repair is ported; the rest still needs the
+   thread repository plus a channel response mapper for their gateway events.
 7. **Crosspost** — five tasks that only matter once a second guild follows a channel; a
    single-community instance can never trigger them.
