@@ -1,11 +1,11 @@
 # What worker-lite does not implement
 
-State of 2026-10-25, against Fluxer API release `2026.1025.144746` (digest `408429273dc8`).
+State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **76 tasks**, of which 6 have handlers, 31 are ignored on purpose
-(a map value with a reason in `cmd/worker/policy.go`), and **39 are parked**.
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which 15 have handlers, 30 are ignored on purpose
+(a map value with a reason in `cmd/worker/policy.go`), and **33 are parked**.
 
-Two different things are listed here: whole tasks we do not run, and gaps *inside* the six handlers we do run.
+Two different things are listed here: whole tasks we do not run, and gaps *inside* the handlers we do run.
 A parked job is not lost — it is copied to `JOBS_PARKED` before the ack — except cron ticks, which are dropped
 deliberately because the scheduler regenerates them. What "dropped" means for a missing handler is therefore:
 the work simply never happens until the handler exists.
@@ -20,8 +20,9 @@ the work simply never happens until the handler exists.
 | `drainActivitySpool` | moves spooled activity events from the Redis list `activity:spool` into the `EVENTS` stream, under the `activity:spool:drain` lock | no-op on this instance: the `EVENTS` stream does not exist, so it reports that once and returns (see §2.7) |
 | `handleMentions` | asks the gateway who a message mentioned (`rpc.gateway.guild.resolve_mention_sources_page`, paged) and publishes `handleMentionChunk` jobs of 250 users | DM mentions are taken straight from the payload; thread scope is not ported (see §3) |
 | `handleMentionChunk` | per-user effect: `read_states.mention_count` +1 under the read-position guard, `recent_mentions` / `recent_mentions_by_guild` rows with a 7-day TTL, guild `suppress_everyone` / `suppress_roles` honoured | threads are written only if the payload says `thread: true`, which upstream sets through the thread scope |
+| `clearAuthenticatedReporterEmails` | erases the stored reporter email from `iar_submissions` rows that belong to an authenticated account | full port, paged by `report_id` like upstream; one failing row is counted and skipped, not fatal |
 
-## 2. Not implemented — 39 tasks
+## 2. Not implemented — 33 tasks
 
 ### 2.1 Data rights and user lifecycle — the most consequential gap
 
@@ -77,7 +78,7 @@ crosspost job is ever produced.
 | task | what breaks |
 |---|---|
 | `flushUserActivityBuffer` | the activity buffer is never flushed into the spool (the spool drain itself is implemented, but the `EVENTS` stream is missing) |
-| `expireReportSnapshots`, `clearAuthenticatedReporterEmails` | report snapshots are never pruned; reporter emails stay stored |
+| `expireReportSnapshots` | report snapshots are never pruned |
 | `processInactivityDeletions` | the 730-day inactivity deletion never runs (config is `off` anyway) |
 | `backfillPasskeyTrait` | one-time passkey backfill for pre-passkey accounts |
 | `joinSingleCommunityMembers` | single-community mode is ON, but the task is a one-shot backfill the API starts by writing `single_community:join_members_run`; the cron is now gated per tick on that key (absent right now, so it does not tick), and if a run does start the tick is parked until the handler exists |
