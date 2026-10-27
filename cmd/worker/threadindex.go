@@ -34,13 +34,15 @@ const (
 )
 
 type threadState struct {
-	ThreadID  string
-	GuildID   string
-	ParentID  string
-	Type      int
-	Archived  bool
-	ArchiveTS string
-	IsPrivate bool
+	ThreadID        string
+	GuildID         string
+	ParentID        string
+	Type            int
+	Archived        bool
+	ArchiveTS       string
+	IsPrivate       bool
+	AutoArchiveMins int
+	CreatedAt       string
 }
 
 func taskRepairThreadIndexes(ctx context.Context, payload map[string]any) error {
@@ -97,6 +99,8 @@ func readThreadState(ctx context.Context, threadID string) (*threadState, error)
 		ArchiveTS: typedString(raw["archive_timestamp"]),
 	}
 	state.Type = intOrZero(raw["type"])
+	state.AutoArchiveMins = intOrZero(raw["auto_archive_duration"])
+	state.CreatedAt = typedString(raw["created_at"])
 	state.IsPrivate = state.Type == channelTypePrivateThread
 	if archived, ok := raw["archived"].(bool); ok {
 		state.Archived = archived
