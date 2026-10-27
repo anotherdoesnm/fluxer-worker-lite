@@ -80,3 +80,26 @@ func TestHandlersAreKnownTasks(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryTaskIsAccountedFor is the closure check: every task the spec knows must be
+// either handled or deliberately ignored. A task that is neither would be parked at
+// runtime, which is exactly the failure mode this repository spent its rounds fixing —
+// so the test treats one as a failure rather than trusting the counter in a document.
+func TestEveryTaskIsAccountedFor(t *testing.T) {
+	var unaccounted []string
+	for _, lane := range lanes {
+		for _, task := range lane.Tasks {
+			if _, ok := handlers[task]; ok {
+				continue
+			}
+			if reason, ignored := ignoredTasks[task]; ignored && reason != "" {
+				continue
+			}
+			unaccounted = append(unaccounted, lane.Name+"/"+task)
+		}
+	}
+	if len(unaccounted) > 0 {
+		t.Fatalf("%d task(s) are neither handled nor ignored, so they would park at runtime: %v",
+			len(unaccounted), unaccounted)
+	}
+}
