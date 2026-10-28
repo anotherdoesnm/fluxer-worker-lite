@@ -76,6 +76,7 @@ docker run -d --name fluxer-worker-lite --network "$NETWORK" --restart no \
 	-e BUNDLE_CHECK_SEC="${BUNDLE_CHECK_SEC:-21600}" \
 	-e STATUS_ADDR=":${STATUS_PORT}" \
 	-e STATS_SEC="${STATS_SEC:-30}" \
+	-e SEARCH_API_ENABLED="${SEARCH_API_ENABLED:-1}" \
 	-e MAX_RSS_MB="${MAX_RSS_MB:-96}" \
 	-e LOG_TASKS="${LOG_TASKS:-0}" \
 	-e PGHOST="${PGHOST:-192.168.1.10}" -e PGPORT="${PGPORT:-5432}" \

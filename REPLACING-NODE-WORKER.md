@@ -67,6 +67,7 @@ below shows the same set.
 | `FLUXER_MEDIA_ENDPOINT`, `FLUXER_MEDIA_PROXY_SECRET_KEY`, `FLUXER_ATTACHMENT_URL_SECRET` | signing attachment URLs it hands to the api's message service |
 | `API_DIGEST`, `API_BUILD_VERSION` | lets the worker say whether its task table matches the running api |
 | `STATUS_ADDR`, `MAX_RSS_MB`, `STATS_SEC`, `LOG_TASKS` | `/status` endpoint and its warning threshold |
+| `SEARCH_API_ENABLED` | serves the Meilisearch-compatible surface (`/indexes`, `/tasks`) on the status port; on by default because the API's `FLUXER_SEARCH_URL` points here once search is switched on. Set it to `0` to keep the port to `/status` only |
 
 ## Switching
 
