@@ -97,6 +97,12 @@ func (st *taskStat) entry() map[string]any {
 // statusServer serves /status and /healthz on addr.
 func statusServer(addr string, js nats.JetStreamContext, parkStream string, cronScheduled, cronTotal int) *http.Server {
 	mux := http.NewServeMux()
+	// Optional: a Meilisearch-compatible surface in front of Postgres FTS, for
+	// instances that want search without running Meilisearch. Off unless asked
+	// for, because it changes what /indexes and /tasks answer on this port.
+	if env("SEARCH_API_ENABLED", "") == "1" {
+		registerSearchAPI(mux)
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))

@@ -226,3 +226,49 @@ deletion), must not appear under their real name.
    channel/thread view mapper their events would need.
 7. **Crosspost** — done. All five tasks have handlers; §3.3 lists what the delivery still omits
    (permission and content checks, avatar, reclaim, live announcement).
+
+## 6. Search: an optional Meilisearch-compatible surface
+
+The API's search backend is Meilisearch, but it talks to it over plain HTTP
+(`MeilisearchHttpClient` is `fetch(host + path)` with an optional bearer key), so a
+shim can stand in for it. `cmd/worker/searchapi.go` and `searchfilter.go` implement
+the subset `MeilisearchIndexAdapter` actually calls:
+
+| method | path | notes |
+|---|---|---|
+| `POST` | `/indexes` | `{uid, primaryKey}`, answered with a succeeded task |
+| `GET` | `/indexes/{uid}` | 404 when the index was never created |
+| `GET` | `/indexes/{uid}/settings` | always the full object; absent lists read as `[]` |
+| `PUT`/`PATCH` | `/indexes/{uid}/settings/{setting}` | raw value as the body, kebab-case names |
+| `POST` | `/indexes/{uid}/documents` | array or single document, `ON CONFLICT` upsert |
+| `DELETE` | `/indexes/{uid}/documents` | drops the index's documents |
+| `POST` | `/indexes/{uid}/documents/delete-batch` | array of ids (numbers or strings) |
+| `POST` | `/indexes/{uid}/documents/delete` | `{filter}` |
+| `POST` | `/indexes/{uid}/search` | `q`, `filter`, `limit`, `offset`, `sort`, `attributesToSearchOn` |
+| `GET` | `/tasks/{uid}` | always `succeeded`: the work happens in the request |
+
+It is mounted on the worker's existing HTTP server and is **off by default**: set
+`SEARCH_API_ENABLED=1` (it then answers `/indexes`, `/tasks`, `/health`, `/version`
+next to `/status`). Storage is two tables in the instance's own Postgres
+(`search_indexes`, `search_documents` with a GIN index over `to_tsvector('simple', body)`),
+so no extra process is needed — which is the point on a 1 GB host where Meilisearch's
+own RSS is 150–300 MiB.
+
+Known differences, deliberate:
+
+- relevance is `ts_rank` over the non-stemmed dictionary plus the caller's sort, not
+  Meilisearch's ranking rules; there is no typo tolerance and no prefix matching
+  (`pg_trgm` would add a fuzzy fallback, but it changes every query's relevance);
+- facets are not computed — the response has no `facetDistribution`, which the
+  adapter already treats as optional;
+- `searchableAttributes` decides what goes into the indexed text (no list means
+  "every scalar in the document"), and `sortableAttributes` is not enforced;
+- filters outside the dialect in `searchfilter.go` are a 400, never silently ignored.
+
+**Not wired yet, on purpose:** the seven indexing tasks stay in `policy.go` with the
+reason `"no search backend configured"` (`indexChannelMessages`, `indexGuildMembers`,
+`refreshSearchIndex`, `backfillThreadSearch`, `syncThreadSearchDocument`,
+`backfillUserAclIndex`, `syncDiscoveryIndex`). Turning search on means implementing
+those handlers *and* pointing the API at this server
+(`FLUXER_MEILISEARCH_URL=http://worker-lite:9099`, empty API key), in that order: the
+API only starts emitting indexing jobs once the backend answers.
