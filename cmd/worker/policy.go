@@ -52,16 +52,13 @@ var ignoredTasks = map[string]string{
 	"operatorPassWallRetention":              "operator pass is a cloud feature",
 	"operatorPassOfferCompletion":            "operator pass is a cloud feature",
 
-	// Search: no backend is configured, so the API answers 403
-	// FEATURE_TEMPORARILY_DISABLED for every search endpoint and the indexing
-	// side has nothing to write to.
-	"indexChannelMessages":     "no search backend configured",
-	"indexGuildMembers":        "no search backend configured",
-	"refreshSearchIndex":       "no search backend configured",
-	"backfillThreadSearch":     "no search backend configured",
-	"syncThreadSearchDocument": "no search backend configured",
-	"backfillUserAclIndex":     "no search backend configured",
-	"syncDiscoveryIndex":       "discovery index needs the search backend",
+	// Search: the indexing side is ported (see searchindex.go), but the API only
+	// starts emitting these jobs once FLUXER_MEILISEARCH_URL points at the
+	// worker's shim, so the remaining ones stay ignored until that is switched on.
+	"indexGuildMembers":    "search backend not switched on yet",
+	"refreshSearchIndex":   "search backend not switched on yet",
+	"backfillUserAclIndex": "search backend not switched on yet",
+	"syncDiscoveryIndex":   "search backend not switched on yet",
 
 	// Optional feeds and features that are switched off in .env.
 	"syncUrlBlocklists":        "blocklist feeds are disabled",

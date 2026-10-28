@@ -2,7 +2,7 @@
 
 State of 2026-10-27, against Fluxer API release `2026.1026.151750`.
 
-Counts from `cmd/worker/spec.go`: **78 tasks**, of which **48 have handlers**, 30 are ignored on purpose
+Counts from `cmd/worker/spec.go`: **78 tasks**, of which **51 have handlers**, 27 are ignored on purpose
 (a map value with a reason in `cmd/worker/policy.go`), and **none is parked**. Every task is therefore
 accounted for: ported, or deliberately ignored with its reason in §2.
 
@@ -19,6 +19,9 @@ the work simply never happens until the handler exists.
 | task | what it does | notes |
 |---|---|---|
 | `prunePostgresKvTtl` | deletes expired `fluxer_kv` rows; runs the two one-time legacy passes (default-TTL backfill, job-ledger expiry) | full port, including the marker-hash contract |
+| `indexChannelMessages` | indexes a channel's message history into the search store: pages the channel partition in id order, skips thread system messages, upserts one document per message, stamps `indexed_at` on the channel and, when the caller passed a completion key, counts the channel into that set | port of `IndexChannelMessages.ts` / `MessageSearchSerializer.ts`; see §6 for the deliberate `guildId` deviation and for the one thing left out (the index refresh, which is a no-op here) |
+| `syncThreadSearchDocument` | writes (or, when the thread is gone, deletes) one thread search document from the thread state and channel rows | port of `ThreadSearchService.syncThreadSearchDocument`; the document shape is `toSearchableThread`, including the snowflake-derived `createdAt`/`idSequence` the cursor pages use |
+| `backfillThreadSearch` | indexes every thread of a guild once, then stamps `search_backfilled_at` in `guild_thread_state` so the task is a no-op afterwards | port of `backfillThreadSearch`; thread ids come from the state rows rather than the thread index, so a thread whose index row was lost is still indexed |
 | `expireStaleJobs` | deadletters jobs stuck in `jobs_active` past 8 days, drops finished ones | full port |
 | `extractEmbeds` | link previews: URL extraction, `svc.unfurl`, KV write, `MESSAGE_UPDATE` | see §4 for the parts left out |
 | `drainActivitySpool` | moves spooled activity events from the Redis list `activity:spool` into the `EVENTS` stream, under the `activity:spool:drain` lock | no-op on this instance: the `EVENTS` stream does not exist, so it reports that once and returns (see §2.7) |
@@ -265,10 +268,11 @@ Known differences, deliberate:
   "every scalar in the document"), and `sortableAttributes` is not enforced;
 - filters outside the dialect in `searchfilter.go` are a 400, never silently ignored.
 
-**Not wired yet, on purpose:** the seven indexing tasks stay in `policy.go` with the
-reason `"no search backend configured"` (`indexChannelMessages`, `indexGuildMembers`,
-`refreshSearchIndex`, `backfillThreadSearch`, `syncThreadSearchDocument`,
-`backfillUserAclIndex`, `syncDiscoveryIndex`). Turning search on means implementing
-those handlers *and* pointing the API at this server
-(`FLUXER_MEILISEARCH_URL=http://worker-lite:9099`, empty API key), in that order: the
-API only starts emitting indexing jobs once the backend answers.
+**Writing side (in progress):** messages, threads and their backfill are ported —
+`indexChannelMessages`, `syncThreadSearchDocument`, `backfillThreadSearch` (see §1).
+Still ignored with `"search backend not switched on yet"`: `indexGuildMembers`,
+`refreshSearchIndex`, `backfillUserAclIndex`, `syncDiscoveryIndex`. Those four have to
+land *before* the API is pointed here
+(`FLUXER_MEILISEARCH_URL=http://worker-lite:9099`, empty API key): once it is, the API
+starts emitting jobs, and an unported one would be parked rather than silently
+skipped — which is worse, because a growing `JOBS_PARKED` is a real backlog.
