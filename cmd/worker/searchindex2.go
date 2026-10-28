@@ -223,3 +223,116 @@ SET row_data = row_data || jsonb_build_object('members_indexed_at', $2::jsonb), 
 WHERE table_name = 'guilds' AND row_key = $1`, bigintSeg(guildID), string(mustJSON(kvDate(time.Now().UTC()))))
 	return err
 }
+
+// --- users (ACL backfill) --------------------------------------------------
+
+// taskBackfillUserACLIndex ports BackfillUserAclIndex.ts: walk every account once,
+// index the ones that carry ACLs, then record that the backfill ran.
+func taskBackfillUserACLIndex(ctx context.Context, _ map[string]any) error {
+	if db == nil {
+		if err := openDB(); err != nil {
+			return err
+		}
+	}
+	writer := searchWriterFor()
+	cursor := ""
+	indexed := 0
+	for {
+		users, err := readUserPage(ctx, cursor, userACLBackfillPageSize)
+		if err != nil {
+			return err
+		}
+		if len(users) == 0 {
+			break
+		}
+		docs := make([]map[string]any, 0, len(users))
+		for _, user := range users {
+			if len(typedStringSlice(user["acls"])) == 0 {
+				continue
+			}
+			docs = append(docs, userSearchDoc(user))
+		}
+		if len(docs) > 0 {
+			if _, err := writer.upsert(ctx, searchIndexUsers, docs); err != nil {
+				return err
+			}
+			indexed += len(docs)
+		}
+		cursor = typedString(users[len(users)-1]["user_id"])
+		if len(users) < userACLBackfillPageSize {
+			break
+		}
+	}
+	if valkey() != nil {
+		if err := valkey().Set(ctx, userACLBackfillDoneKey, time.Now().UTC().Format(time.RFC3339), 0).Err(); err != nil {
+			log.Printf("backfillUserAclIndex: marking done: %v", err)
+		}
+	}
+	log.Printf("backfillUserAclIndex: indexed=%d", indexed)
+	return nil
+}
+
+// readUserPage pages accounts by user id, which is the row's own key.
+func readUserPage(ctx context.Context, afterUserID string, limit int) ([]map[string]any, error) {
+	rows, err := db.QueryContext(ctx, `
+SELECT row_data
+FROM fluxer_kv
+WHERE table_name = 'users' AND row_data->'user_id'->>'value' > $1
+ORDER BY row_data->'user_id'->>'value'
+LIMIT $2`, afterUserID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []map[string]any
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		data := map[string]any{}
+		if err := json.Unmarshal(raw, &data); err != nil {
+			continue
+		}
+		out = append(out, data)
+	}
+	return out, rows.Err()
+}
+
+// userSearchDoc ports convertToSearchableUser for the fields this instance's user
+// rows actually carry. It is the admin panel's user index: name, discriminator,
+// flags, the boolean filters and the ACL set.
+//
+// Fields the upstream serializer also emits but that are absent here stay null:
+// email (this instance signs in by username, so account rows carry no address),
+// premiumType, tempBannedUntil, pendingDeletionAt and the two Stripe ids. A
+// Meilisearch deployment would index them; nothing is lost for the filters that
+// can actually match on this instance, and the nulls document the gap.
+func userSearchDoc(user map[string]any) map[string]any {
+	id := typedString(user["user_id"])
+	var lastActiveAt any
+	if ts := dateSeconds(user["last_active_at"]); ts != nil {
+		lastActiveAt = *ts
+	}
+	flags := typedString(user["flags"])
+	if flags == "" {
+		flags = "0"
+	}
+	return map[string]any{
+		"id":                id,
+		"username":          typedString(user["username"]),
+		"discriminator":     intOrZero(user["discriminator"]),
+		"email":             nil,
+		"isBot":             boolField(user, "bot"),
+		"isSystem":          boolField(user, "system"),
+		"flags":             flags,
+		"premiumType":       nil,
+		"emailVerified":     boolField(user, "email_verified"),
+		"emailBounced":      boolField(user, "email_bounced"),
+		"acls":              typedStringSlice(user["acls"]),
+		"createdAt":         snowflakeSeconds(id),
+		"lastActiveAt":      lastActiveAt,
+		"tempBannedUntil":   nil,
+		"pendingDeletionAt": nil,
+	}
+}

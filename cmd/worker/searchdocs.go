@@ -434,6 +434,11 @@ func sliceOfMaps(v any) []map[string]any {
 // objects ({"value": "42", "__fluxer_type": "bigint"}) but a plain string is
 // accepted too, which keeps the same helper usable for tags and mentions.
 func typedStringSlice(v any) []string {
+	// A KV set is stored as {"value": [...], "__fluxer_type": "set"}; unwrap it
+	// first so callers can pass either form.
+	if m, ok := v.(map[string]any); ok {
+		return typedStringSlice(m["value"])
+	}
 	switch t := v.(type) {
 	case []any:
 		out := make([]string, 0, len(t))
