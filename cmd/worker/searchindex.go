@@ -46,7 +46,7 @@ func taskIndexChannelMessages(ctx context.Context, payload map[string]any) error
 	channelCount := int(int64OrZero(payload, "channelCount"))
 
 	guildID := ""
-	if channel, err := readKV(ctx, "channels", bigintSeg(channelID)); err == nil && channel != nil {
+	if channel, err := readChannelByID(ctx, channelID); err == nil && channel != nil {
 		guildID = typedString(channel["guild_id"])
 	}
 
@@ -155,7 +155,7 @@ func patchChannelIndexedAt(ctx context.Context, channelID string) error {
 	_, err := db.ExecContext(ctx, `
 UPDATE fluxer_kv
 SET row_data = row_data || jsonb_build_object('indexed_at', $2::jsonb), updated_at = now()
-WHERE table_name = 'channels' AND row_key = $1`, bigintSeg(channelID), string(mustJSON(kvDate(time.Now().UTC()))))
+WHERE table_name = 'channels' AND row_data->'channel_id'->>'value' = $1`, channelID, string(mustJSON(kvDate(time.Now().UTC()))))
 	return err
 }
 
@@ -205,7 +205,7 @@ func taskSyncThreadSearchDocument(ctx context.Context, payload map[string]any) e
 		_, err := writer.deleteIDs(ctx, searchIndexThreads, []string{threadID})
 		return err
 	}
-	channel, err := readKV(ctx, "channels", bigintSeg(threadID))
+	channel, err := readChannelByID(ctx, threadID)
 	if err != nil {
 		return err
 	}
@@ -256,7 +256,7 @@ func taskBackfillThreadSearch(ctx context.Context, payload map[string]any) error
 			if err != nil || state == nil {
 				continue
 			}
-			channel, err := readKV(ctx, "channels", bigintSeg(threadID))
+			channel, err := readChannelByID(ctx, threadID)
 			if err != nil || channel == nil {
 				continue
 			}

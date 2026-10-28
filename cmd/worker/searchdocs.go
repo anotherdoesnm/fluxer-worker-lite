@@ -17,7 +17,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -413,6 +415,29 @@ func threadSearchDoc(channel, state map[string]any) map[string]any {
 }
 
 // --- small helpers ---------------------------------------------------------
+
+// readChannelByID reads a channel row. Channels are NOT keyed by the bare
+// channel id: the row key is bigint(channel_id) + \x1f + a trailing boolean
+// segment, so a lookup by bigintSeg alone silently finds nothing. Querying the
+// row's own channel_id column is the form that works for every channel kind.
+func readChannelByID(ctx context.Context, channelID string) (map[string]any, error) {
+	var raw []byte
+	err := db.QueryRowContext(ctx, `
+SELECT row_data FROM fluxer_kv
+WHERE table_name = 'channels' AND row_data->'channel_id'->>'value' = $1
+LIMIT 1`, channelID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 // sliceOfMaps is the typed view of a JSON array of objects: rows in fluxer_kv
 // store embeds, attachments and stickers that way.
