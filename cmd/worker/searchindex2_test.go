@@ -279,3 +279,73 @@ func TestRefreshProgressShape(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditLogSearchDoc(t *testing.T) {
+	row := map[string]any{
+		"log_id":           map[string]any{"value": "1563468490076061697", "__fluxer_type": "bigint"},
+		"admin_user_id":    map[string]any{"value": "1563468490076061696", "__fluxer_type": "bigint"},
+		"target_type":      "instance_config",
+		"target_id":        map[string]any{"value": "0", "__fluxer_type": "bigint"},
+		"action":           "get_instance_config",
+		"audit_log_reason": nil,
+	}
+	doc := auditLogSearchDoc(row)
+	if doc["id"] != "1563468490076061697" || doc["logId"] != doc["id"] {
+		t.Fatalf("identity: %v", doc)
+	}
+	if doc["adminUserId"] != "1563468490076061696" || doc["action"] != "get_instance_config" {
+		t.Fatalf("fields: %v", doc)
+	}
+	if doc["targetType"] != "instance_config" || doc["targetId"] != "0" {
+		t.Fatalf("target: %v", doc)
+	}
+	if doc["auditLogReason"] != nil {
+		t.Fatalf("auditLogReason = %v, want nil", doc["auditLogReason"])
+	}
+	if doc["createdAt"] != snowflakeSeconds("1563468490076061697") {
+		t.Fatalf("createdAt = %v", doc["createdAt"])
+	}
+}
+
+func TestReportSearchDoc(t *testing.T) {
+	row := map[string]any{
+		"report_id":             map[string]any{"value": "1565000000000000000", "__fluxer_type": "bigint"},
+		"reporter_id":           map[string]any{"value": "42", "__fluxer_type": "bigint"},
+		"reported_at":           map[string]any{"value": "2026-10-28T12:00:00.000Z", "__fluxer_type": "date"},
+		"status":                1,
+		"report_type":           2,
+		"category":              "harassment",
+		"reason":                "spam",
+		"additional_info":       "details",
+		"reported_user_id":      map[string]any{"value": "7", "__fluxer_type": "bigint"},
+		"reported_guild_name":   "Test Guild",
+		"reported_channel_name": "general",
+		"resolved_at":           map[string]any{"value": "2026-10-28T13:00:00.000Z", "__fluxer_type": "date"},
+		"resolved_by_admin_id":  map[string]any{"value": "9", "__fluxer_type": "bigint"},
+	}
+	doc := reportSearchDoc(row)
+	if doc["id"] != "1565000000000000000" || doc["reporterId"] != "42" {
+		t.Fatalf("identity: %v", doc)
+	}
+	if doc["status"] != 1 || doc["reportType"] != 2 || doc["category"] != "harassment" {
+		t.Fatalf("classification: %v", doc)
+	}
+	if doc["reportedAt"] != int64(1793188800) || doc["resolvedAt"] != int64(1793192400) {
+		t.Fatalf("timestamps: %v / %v", doc["reportedAt"], doc["resolvedAt"])
+	}
+	if doc["reportedGuildName"] != "Test Guild" || doc["reportedChannelName"] != "general" {
+		t.Fatalf("names: %v", doc)
+	}
+	if doc["reportedUserId"] != "7" || doc["resolvedByAdminId"] != "9" {
+		t.Fatalf("ids: %v / %v", doc["reportedUserId"], doc["resolvedByAdminId"])
+	}
+	// An anonymous report has no reporter id, and upstream indexes it as the
+	// literal "anonymous" so the filter still matches.
+	anonymous := reportSearchDoc(map[string]any{"report_id": map[string]any{"value": "5", "__fluxer_type": "bigint"}})
+	if anonymous["reporterId"] != "anonymous" {
+		t.Fatalf("anonymous reporter = %v", anonymous["reporterId"])
+	}
+	if anonymous["resolvedAt"] != nil || anonymous["category"] != "" {
+		t.Fatalf("empty report: %v", anonymous)
+	}
+}

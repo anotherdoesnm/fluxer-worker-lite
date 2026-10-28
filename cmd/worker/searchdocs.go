@@ -31,6 +31,8 @@ const (
 	searchIndexUsers        = "users"
 	searchIndexThreads      = "threads"
 	searchIndexGuildMembers = "guild_members"
+	searchIndexAuditLogs    = "audit_logs"
+	searchIndexReports      = "reports"
 )
 
 // searchIndexSpec is the Go mirror of MeilisearchIndexDefinition.
@@ -81,6 +83,23 @@ var searchIndexSpecs = map[string]searchIndexSpec{
 			"tempBannedUntil", "pendingDeletionAt", "acls", "createdAt",
 		},
 		Sortable: []string{"createdAt", "lastActiveAt", "id"},
+	},
+	searchIndexAuditLogs: {
+		UID: searchIndexAuditLogs, PrimaryKey: "id",
+		Searchable: []string{"action", "targetType", "targetId", "auditLogReason"},
+		Filterable: []string{"adminUserId", "targetType", "targetId", "action"},
+		Sortable:   []string{"createdAt", "id"},
+	},
+	searchIndexReports: {
+		UID: searchIndexReports, PrimaryKey: "id",
+		Searchable: []string{"category", "additionalInfo", "reportedGuildName", "reportedChannelName"},
+		Filterable: []string{
+			"reporterId", "status", "reportType", "category", "reason",
+			"reportedUserId", "reportedWebhookId", "reportedGuildId",
+			"reportedMessageId", "reportedChannelId", "guildContextId",
+			"resolvedByAdminId", "resolvedAt",
+		},
+		Sortable: []string{"createdAt", "reportedAt", "resolvedAt", "id"},
 	},
 	searchIndexGuildMembers: {
 		UID: searchIndexGuildMembers, PrimaryKey: "id",
@@ -412,6 +431,72 @@ func threadSearchDoc(channel, state map[string]any) map[string]any {
 		"archivedAt":    archivedAt,
 	}
 	return doc
+}
+
+// --- small helpers ---------------------------------------------------------
+
+// --- admin audit log and report documents ----------------------------------
+
+// auditLogSearchDoc ports convertToSearchableAuditLog: the admin panel's audit log
+// search. `metadata` is not part of the document upstream either, so it is not
+// read here.
+func auditLogSearchDoc(row map[string]any) map[string]any {
+	id := typedString(row["log_id"])
+	return map[string]any{
+		"id":             id,
+		"logId":          id,
+		"adminUserId":    typedString(row["admin_user_id"]),
+		"targetType":     typedString(row["target_type"]),
+		"targetId":       typedString(row["target_id"]),
+		"action":         typedString(row["action"]),
+		"auditLogReason": nullIfEmpty(typedString(row["audit_log_reason"])),
+		"createdAt":      snowflakeSeconds(id),
+	}
+}
+
+// reportSearchDoc ports convertToSearchableReport over an iar_submissions row.
+//
+// This instance has no reports (the table is empty), so this mapping is written
+// from the serializer's field list and the IARSubmission interface, not verified
+// against real rows: the column names are the interface's fields in snake_case.
+// When reports do arrive, the first run of refreshSearchIndex with index_type
+// "reports" is what confirms it.
+func reportSearchDoc(row map[string]any) map[string]any {
+	id := typedString(row["report_id"])
+	reportedAt := int64(0)
+	if ts := dateSeconds(row["reported_at"]); ts != nil {
+		reportedAt = *ts
+	}
+	var resolvedAt any
+	if ts := dateSeconds(row["resolved_at"]); ts != nil {
+		resolvedAt = *ts
+	}
+	reporter := typedString(row["reporter_id"])
+	if reporter == "" {
+		reporter = "anonymous"
+	}
+	return map[string]any{
+		"id":                  id,
+		"reporterId":          reporter,
+		"reportedAt":          reportedAt,
+		"status":              intOrZero(row["status"]),
+		"reportType":          intOrZero(row["report_type"]),
+		"category":            typedString(row["category"]),
+		"reason":              typedString(row["reason"]),
+		"additionalInfo":      nullIfEmpty(typedString(row["additional_info"])),
+		"reportedUserId":      nullIfEmpty(typedString(row["reported_user_id"])),
+		"reportedWebhookId":   nullIfEmpty(typedString(row["reported_webhook_id"])),
+		"reportedGuildId":     nullIfEmpty(typedString(row["reported_guild_id"])),
+		"reportedGuildName":   nullIfEmpty(typedString(row["reported_guild_name"])),
+		"reportedMessageId":   nullIfEmpty(typedString(row["reported_message_id"])),
+		"reportedChannelId":   nullIfEmpty(typedString(row["reported_channel_id"])),
+		"reportedChannelName": nullIfEmpty(typedString(row["reported_channel_name"])),
+		"guildContextId":      nullIfEmpty(typedString(row["guild_context_id"])),
+		"resolvedAt":          resolvedAt,
+		"resolvedByAdminId":   nullIfEmpty(typedString(row["resolved_by_admin_id"])),
+		"publicComment":       nullIfEmpty(typedString(row["public_comment"])),
+		"createdAt":           snowflakeSeconds(id),
+	}
 }
 
 // --- small helpers ---------------------------------------------------------

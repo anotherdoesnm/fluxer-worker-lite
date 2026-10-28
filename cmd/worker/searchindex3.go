@@ -141,9 +141,10 @@ func runRefreshSearchIndex(ctx context.Context, jobID, indexType, guildID string
 		return reindexGuildMembers(ctx, guildID, report)
 	case "threads":
 		return reindexThreads(ctx, guildID, report)
-	case "reports", "audit_logs":
-		log.Printf("refreshSearchIndex: %s index is not ported, nothing to reindex", indexType)
-		return 0, nil
+	case "audit_logs":
+		return reindexAuditLogs(ctx, report)
+	case "reports":
+		return reindexReports(ctx, report)
 	case "all":
 		return reindexAll(ctx, jobID, report)
 	default:
@@ -434,6 +435,8 @@ func reindexAll(ctx context.Context, jobID string, report func(int, int, string)
 		{"users", reindexUsers},
 		{"guilds", reindexGuilds},
 		{"discovery", reindexDiscovery},
+		{"audit_logs", reindexAuditLogs},
+		{"reports", reindexReports},
 	}
 	guildCount := 0
 	for _, step := range global {
@@ -564,4 +567,105 @@ func indexOf(haystack, needle string) int {
 		}
 	}
 	return -1
+}
+
+// reindexAuditLogs rebuilds the admin audit log index from admin_audit_logs.
+func reindexAuditLogs(ctx context.Context, report func(int, int, string)) (int, error) {
+	if err := deleteAllSearchDocs(ctx, searchIndexAuditLogs); err != nil {
+		return 0, err
+	}
+	writer := searchWriterFor()
+	total := 0
+	cursor := ""
+	for {
+		rows, err := readKVPage(ctx, "admin_audit_logs", cursor, refreshPageSize)
+		if err != nil {
+			return total, err
+		}
+		if len(rows) == 0 {
+			break
+		}
+		docs := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			docs = append(docs, auditLogSearchDoc(row.data))
+		}
+		if _, err := writer.upsert(ctx, searchIndexAuditLogs, docs); err != nil {
+			return total, err
+		}
+		total += len(docs)
+		cursor = rows[len(rows)-1].key
+		report(total, total, "audit_logs")
+		if len(rows) < refreshPageSize {
+			break
+		}
+	}
+	return total, nil
+}
+
+// reindexReports rebuilds the report index from iar_submissions.
+func reindexReports(ctx context.Context, report func(int, int, string)) (int, error) {
+	if err := deleteAllSearchDocs(ctx, searchIndexReports); err != nil {
+		return 0, err
+	}
+	writer := searchWriterFor()
+	total := 0
+	cursor := ""
+	for {
+		rows, err := readKVPage(ctx, "iar_submissions", cursor, refreshPageSize)
+		if err != nil {
+			return total, err
+		}
+		if len(rows) == 0 {
+			break
+		}
+		docs := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			docs = append(docs, reportSearchDoc(row.data))
+		}
+		if _, err := writer.upsert(ctx, searchIndexReports, docs); err != nil {
+			return total, err
+		}
+		total += len(docs)
+		cursor = rows[len(rows)-1].key
+		report(total, total, "reports")
+		if len(rows) < refreshPageSize {
+			break
+		}
+	}
+	return total, nil
+}
+
+// kvRow is one row of a KV table, in row-key order.
+type kvRow struct {
+	key  string
+	data map[string]any
+}
+
+// readKVPage pages any KV table by row key. The tables that are indexed as a whole
+// (admin audit logs, reports) share the same shape, so one helper covers both.
+func readKVPage(ctx context.Context, table, afterKey string, limit int) ([]kvRow, error) {
+	rows, err := db.QueryContext(ctx, `
+SELECT row_key, row_data
+FROM fluxer_kv
+WHERE table_name = $1 AND row_key > $2
+ORDER BY row_key
+LIMIT $3`, table, afterKey, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []kvRow
+	for rows.Next() {
+		var key string
+		var raw []byte
+		if err := rows.Scan(&key, &raw); err != nil {
+			return nil, err
+		}
+		data := map[string]any{}
+		if err := json.Unmarshal(raw, &data); err != nil {
+			continue
+		}
+		out = append(out, kvRow{key: key, data: data})
+	}
+	return out, rows.Err()
 }
