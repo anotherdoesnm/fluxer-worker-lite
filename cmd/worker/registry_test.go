@@ -103,3 +103,37 @@ func TestEveryTaskIsAccountedFor(t *testing.T) {
 			len(unaccounted), unaccounted)
 	}
 }
+
+// TestEveryIgnoredTaskIsDocumented is the mirror of the check above: a task that
+// policy.go ignores must appear in OMISSIONS.md §2 with its reason. Without it the
+// section silently drifts — it did, and it claimed 33 tasks while only 23 were
+// still ignored.
+func TestEveryIgnoredTaskIsDocumented(t *testing.T) {
+	raw, err := os.ReadFile("../../OMISSIONS.md")
+	if err != nil {
+		t.Fatalf("read OMISSIONS.md: %v", err)
+	}
+	text := string(raw)
+	start := strings.Index(text, "## 2. Not implemented")
+	if start < 0 {
+		t.Fatal("OMISSIONS.md has no \"Not implemented\" section")
+	}
+	section := text[start:]
+	if end := strings.Index(section, "\n## 3."); end >= 0 {
+		section = section[:end]
+	}
+
+	documented := make(map[string]struct{})
+	for _, m := range regexp.MustCompile("`([A-Za-z0-9]+)`").FindAllStringSubmatch(section, -1) {
+		documented[m[1]] = struct{}{}
+	}
+	for task, reason := range ignoredTasks {
+		if reason == "" {
+			t.Errorf("policy.go ignores %s without a reason", task)
+			continue
+		}
+		if _, ok := documented[task]; !ok {
+			t.Errorf("policy.go ignores %s, but OMISSIONS.md §2 does not list it", task)
+		}
+	}
+}
