@@ -2,10 +2,13 @@ package main
 
 // Generated from the fluxer-api image of build 2026.1025.144746 (digest
 // 408429273dc8), read from src/api/worker/WorkerLaneConfig.ts and
-// WorkerMain.ts in that image. The 2026.1025.35621 tables were re-checked
-// against this release: 5 lanes, 76 tasks, 28 crons, unchanged. Do not hand-edit the task lists: regenerate them when the
-// release moves, because a consumer filter that misses one task silently
-// stops that work while everything still looks healthy.
+// WorkerMain.ts in that image. Re-checked against 2026.1026.151750,
+// 2026.1027.210447 (the release this worker is pinned to) and 2026.1028.143032:
+// 5 lanes, 78 tasks, 42 retired, 28 crons — the task tree and
+// WorkerLaneConfig.ts are byte-identical across all four. Do not hand-edit the
+// task lists: regenerate them when the release moves, because a consumer filter
+// that misses one task silently stops that work while everything still looks
+// healthy.
 //
 // retiredTasks are tasks upstream no longer publishes. They stay in our
 // filters on purpose: a leftover message from an older release must be

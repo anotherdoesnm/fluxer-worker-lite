@@ -32,11 +32,14 @@ package main
 // Known differences, on purpose:
 //   - ranking is ts_rank over a plain (non-stemmed) dictionary plus the sort
 //     order the API asks for, not Meilisearch's ranking rules;
-//   - there is no typo tolerance and no prefix matching. `pg_trgm` could add a
-//     fuzzy fallback later, but it changes relevance for every query, so it is
-//     not on by default;
+//   - a query is answered in two passes: full text first, then — only if that
+//     found nothing — ILIKE plus word_similarity() from pg_trgm, which is what
+//     gives substring and typo matches. pg_trgm is installed on the first write
+//     (trusted since PostgreSQL 13); where it cannot be, the worker logs it and
+//     keeps the ILIKE pass, losing typo tolerance but not search;
 //   - facets are not computed (the response simply has no facetDistribution,
 //     which the adapter already treats as optional);
+//   - GET /indexes (the listing) is not served, only GET /indexes/{uid};
 //   - settings are stored and honoured where they matter here
 //     (searchableAttributes decides what goes into the indexed text, sortable
 //     attributes are validated), but filterable/ranking settings are not

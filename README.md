@@ -1,12 +1,12 @@
 # worker-lite
 
 A Go replacement for the Fluxer `worker` service, written against the wire
-contract of Fluxer API release `2026.1026.151750` rather than against its source
+contract of Fluxer API release `2026.1027.210447` rather than against its source
 tree: the same JetStream subjects (`jobs.<task>`), the same envelope
 (`{payload, run_at, created_at}`), the same consumers, heartbeats and dead-letter
 subject, but **4–10 MiB RSS instead of 185 MiB** — measured, see `bench/`.
 
-It is not a drop-in replacement: it implements 48 of the 78 tasks and ignores 30 on
+It is not a drop-in replacement: it implements 55 of the 78 tasks and ignores 23 on
 purpose, with a reason for each. `REPLACING-NODE-WORKER.md` is the operator document —
 what is covered, when the gaps matter, how to switch, verify and roll back.
 
@@ -37,8 +37,8 @@ lost, and `OMISSIONS.md` lists exactly what is missing.
   is this worker), so a tick for an unimplemented task is acked and counted, not
   parked.
 - **Ignore is a decision with a reason.** Features that are off on this instance
-  (billing, app-store, operator pass, search indexing, blocklist feeds) are acked
-  and dropped, and the reason is a value in `policy.go`, not a comment.
+  (billing, app-store, operator pass, blocklist feeds, guild visits, cache purge) are
+  acked and dropped, and the reason is a value in `policy.go`, not a comment.
 - **A dead worker must look dead.** `restart: no` on purpose.
 - **The spec is generated, not typed.** `spec.go` was parsed out of the api
   image's `dist`; `version.go` records which release, and compares it with the
