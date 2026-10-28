@@ -262,20 +262,29 @@ own RSS is 150–300 MiB.
 
 Known differences, deliberate:
 
-- relevance is `ts_rank` over the non-stemmed dictionary plus the caller's sort, not
-  Meilisearch's ranking rules; there is no typo tolerance and no prefix matching
-  (`pg_trgm` would add a fuzzy fallback, but it changes every query's relevance);
+- full text is the first pass and keeps `ts_rank` over the non-stemmed dictionary
+  plus the caller's sort, not Meilisearch's ranking rules. When it finds nothing a
+  second pass matches substrings (`ILIKE`) and, with `pg_trgm` installed,
+  `word_similarity(query, body) > 0.5` — so a half-typed `doesn` finds `doesnm`
+  and a typo `doesnn` still finds it. `pg_trgm` is a trusted extension since
+  PostgreSQL 13 and is installed on first use; without it only the substring half
+  of the fallback works;
 - facets are not computed — the response has no `facetDistribution`, which the
   adapter already treats as optional;
 - `searchableAttributes` decides what goes into the indexed text (no list means
   "every scalar in the document"), and `sortableAttributes` is not enforced;
 - filters outside the dialect in `searchfilter.go` are a 400, never silently ignored.
 
-**Writing side (in progress):** messages, threads and their backfill are ported —
-`indexChannelMessages`, `syncThreadSearchDocument`, `backfillThreadSearch` (see §1).
-Still ignored with `"search backend not switched on yet"`: `indexGuildMembers`,
-`refreshSearchIndex`, `backfillUserAclIndex`, `syncDiscoveryIndex`. Those four have to
-land *before* the API is pointed here
-(`FLUXER_MEILISEARCH_URL=http://worker-lite:9099`, empty API key): once it is, the API
-starts emitting jobs, and an unported one would be parked rather than silently
-skipped — which is worse, because a growing `JOBS_PARKED` is a real backlog.
+**Writing side: all seven tasks are ported** — `indexChannelMessages`,
+`indexGuildMembers`, `backfillUserAclIndex`, `syncDiscoveryIndex`,
+`syncThreadSearchDocument`, `backfillThreadSearch` and `refreshSearchIndex` (see §1),
+and they are live here: the API is pointed at the shim with
+`FLUXER_SEARCH_ENGINE=meilisearch` and `FLUXER_SEARCH_URL=http://fluxer-worker-lite:9099`
+(an overlay loaded after `docker-compose.no-search.yml`), `SEARCH_API_ENABLED`
+defaults to 1 in `deploy.sh`, and indexing runs on real traffic — the admin panel's
+user list is the first thing that depends on it.
+
+The two indexes this worker cannot fill stay honest: `refreshSearchIndex` accepts the
+`reports` and `audit_logs` types, logs that they are not ported, and finishes with
+zero, so "reindex everything" still runs. Nothing about them is silently wrong; there
+is simply no document builder for those tables here.
