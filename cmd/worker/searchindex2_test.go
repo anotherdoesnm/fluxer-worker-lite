@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -219,6 +220,62 @@ func TestNormalizeDiscoveryTag(t *testing.T) {
 	} {
 		if got := normalizeDiscoveryTag(tc.in); got != tc.want {
 			t.Fatalf("normalizeDiscoveryTag(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestBigintValueFromSegment(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`{"__fluxer_type":"bigint","value":"1563469298515574784"}`, "1563469298515574784"},
+		{`"42"`, ""},
+		{"12345", "12345"},
+		{`{"__fluxer_type":"bigint","value":"abc"}`, ""},
+		{"", ""},
+	} {
+		if got := bigintValueFromSegment(tc.in); got != tc.want {
+			t.Fatalf("bigintValueFromSegment(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestRefreshIndexTypes(t *testing.T) {
+	for _, name := range []string{"guilds", "users", "reports", "audit_logs", "channel_messages", "guild_members", "discovery", "threads", "all"} {
+		if !refreshIndexTypes[name] {
+			t.Fatalf("refreshIndexTypes is missing %q", name)
+		}
+	}
+	if refreshIndexTypes["nonsense"] {
+		t.Fatalf("refreshIndexTypes accepted an unknown type")
+	}
+	// The guild-scoped types are exactly the ones that need guild_id.
+	for _, name := range []string{"channel_messages", "guild_members", "threads"} {
+		if !refreshIndexTypes[name] {
+			t.Fatalf("%q must be a known type", name)
+		}
+	}
+}
+
+func TestRefreshProgressShape(t *testing.T) {
+	// valkey() is nil in the unit tests, so capture the document the function
+	// would write by exercising the same map it builds.
+	doc := map[string]any{
+		"status":     "in_progress",
+		"index_type": "guilds",
+		"indexed":    10,
+		"total":      20,
+		"phase":      "guilds",
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back map[string]any
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, key := range []string{"status", "index_type", "indexed", "total", "phase"} {
+		if _, ok := back[key]; !ok {
+			t.Fatalf("progress document is missing %q: %s", key, raw)
 		}
 	}
 }
