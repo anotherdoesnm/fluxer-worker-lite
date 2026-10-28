@@ -442,7 +442,37 @@ func (s *pgSearchStore) ensure(ctx context.Context) error {
 			return fmt.Errorf("search schema: %w", err)
 		}
 	}
+	s.ensureTrigram(ctx)
 	return nil
+}
+
+var (
+	trgmOnce sync.Once
+	trgmOK   atomic.Bool
+)
+
+// trgmReady reports whether the substring/typo fallback can use similarity().
+func trgmReady() bool { return trgmOK.Load() }
+
+// ensureTrigram installs pg_trgm once, best effort. The extension is trusted
+// since PostgreSQL 13, so the instance's own role can add it. When that fails
+// (an older server, or a role without CREATE) the fallback still works through
+// ILIKE: only typo tolerance is lost, which is worth a log line rather than an
+// error on every search.
+func (s *pgSearchStore) ensureTrigram(ctx context.Context) {
+	trgmOnce.Do(func() {
+		if _, err := db.ExecContext(ctx, `CREATE EXTENSION IF NOT EXISTS pg_trgm`); err != nil {
+			log.Printf("search: pg_trgm unavailable, substring fallback only: %v", err)
+			return
+		}
+		if _, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS search_documents_trgm_idx
+			ON `+searchDocumentsTable+` USING gin (body gin_trgm_ops)`); err != nil {
+			log.Printf("search: pg_trgm index: %v", err)
+			return
+		}
+		trgmOK.Store(true)
+		log.Printf("search: pg_trgm enabled (prefix and typo fallback)")
+	})
 }
 
 func (s *pgSearchStore) indexExists(ctx context.Context, uid string) (bool, error) {
@@ -605,7 +635,36 @@ func (s *pgSearchStore) deleteAll(ctx context.Context, uid string) (int, error) 
 	return int(n), nil
 }
 
+// searchMode selects the WHERE/rank pair for one pass over the documents.
+type searchMode int
+
+const (
+	searchFullText searchMode = iota
+	searchFallback
+)
+
+// search answers a query. The first pass is Postgres full text: it is what
+// matches whole words and what the ts_rank ordering is for. When that finds
+// nothing, a second pass runs the substring/similarity fallback, because a
+// reader typing "doesn" for "doesnm", or "doesnn" with a typo, expects a hit and
+// Meilisearch would have given one. Exact matches never reach the fallback, so
+// relevance for the normal case is unchanged.
 func (s *pgSearchStore) search(ctx context.Context, uid string, req searchRequest) (searchResponse, error) {
+	resp, err := s.searchPass(ctx, uid, req, searchFullText)
+	if err != nil {
+		return searchResponse{}, err
+	}
+	if len(resp.Hits) > 0 {
+		return resp, nil
+	}
+	q := strings.TrimSpace(req.Query)
+	if q == "" || q == "*" {
+		return resp, nil
+	}
+	return s.searchPass(ctx, uid, req, searchFallback)
+}
+
+func (s *pgSearchStore) searchPass(ctx context.Context, uid string, req searchRequest, mode searchMode) (searchResponse, error) {
 	where, args, err := compileSearchFilter(req.Filter, 2) // $1 = index uid
 	if err != nil {
 		return searchResponse{}, err
@@ -616,19 +675,45 @@ func (s *pgSearchStore) search(ctx context.Context, uid string, req searchReques
 	if where != "" {
 		conds = append(conds, "("+where+")")
 	}
+
 	q := strings.TrimSpace(req.Query)
-	if q != "" && q != "*" {
+	rank := "0"
+	useQuery := q != "" && q != "*"
+	switch {
+	case !useQuery:
+		// No query: every document that passed the filter, in the requested order.
+	case mode == searchFullText:
 		args = append(args, q)
 		conds = append(conds, fmt.Sprintf("to_tsvector('simple', body) @@ websearch_to_tsquery('simple', $%d)", len(args)))
+		rank = fmt.Sprintf("ts_rank(to_tsvector('simple', body), websearch_to_tsquery('simple', $%d))", len(args))
+	default:
+		args = append(args, "%"+escapeLikePattern(q)+"%")
+		likeArg := len(args)
+		conds = append(conds, fmt.Sprintf("body ILIKE $%d ESCAPE '\\'", likeArg))
+		if trgmReady() {
+			// pg_trgm turns the same substring idea into "close enough", which is
+			// what makes a typo find anything at all.
+			args = append(args, q)
+			simArg := len(args)
+			// word_similarity, not similarity: the documents are long (a whole
+			// message, or a user's name plus id), and plain similarity dilutes a
+			// short query against them to the point where a one-letter typo never
+			// clears any threshold. word_similarity compares the query against the
+			// best matching part of the text, which is the behaviour a search box
+			// is expected to have.
+			conds[len(conds)-1] = fmt.Sprintf("(body ILIKE $%d ESCAPE '\\' OR word_similarity($%d, body) > 0.5)", likeArg, simArg)
+			rank = fmt.Sprintf("word_similarity($%d, body)", simArg)
+		}
 	}
 
 	order, err := compileSearchSort(req.Sort, req.PrimaryKeyOrID())
 	if err != nil {
 		return searchResponse{}, err
 	}
-	rank := "0"
-	if q != "" && q != "*" {
-		rank = fmt.Sprintf("ts_rank(to_tsvector('simple', body), websearch_to_tsquery('simple', $%d))", len(args))
+	if useQuery && mode == searchFallback {
+		// Closest first; the caller asked for a specific sort, so only use it as a
+		// tie-breaker.
+		order = "rank DESC, " + order
 	}
 
 	args = append(args, req.Limit, req.Offset)
@@ -667,6 +752,14 @@ func (s *pgSearchStore) search(ctx context.Context, uid string, req searchReques
 		return searchResponse{}, err
 	}
 	return out, nil
+}
+
+// escapeLikePattern makes a user query a literal substring: without this a "%"
+// in the query would turn the fallback into a match-everything.
+func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "%", `\%`)
+	return strings.ReplaceAll(s, "_", `\_`)
 }
 
 // PrimaryKeyOrID keeps the sort compiler honest: documents are addressed by the
