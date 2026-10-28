@@ -336,3 +336,198 @@ func userSearchDoc(user map[string]any) map[string]any {
 		"pendingDeletionAt": nil,
 	}
 }
+
+// --- discovery (guilds index) ----------------------------------------------
+
+const (
+	discoveryByStatusTable     = "discovery_by_status"
+	discoveryStatusApproved    = "approved"
+	discoveryBatchSize         = 200
+	guildVerificationLevelNone = 0
+	guildVerificationLevelLow  = 1
+	guildVerificationLevelHigh = 3
+)
+
+// taskSyncDiscoveryIndex ports SyncDiscoveryIndex.ts: every approved discovery
+// application re-indexes its guild with the discovery context, so a guild that
+// turned discoverable (or changed its description/tags) shows up in discovery
+// search without waiting for the next update of that row.
+func taskSyncDiscoveryIndex(ctx context.Context, _ map[string]any) error {
+	if db == nil {
+		if err := openDB(); err != nil {
+			return err
+		}
+	}
+	applications, err := readApprovedDiscoveryApplications(ctx)
+	if err != nil {
+		return err
+	}
+	if len(applications) == 0 {
+		log.Printf("syncDiscoveryIndex: no approved discovery applications, nothing to sync")
+		return nil
+	}
+	writer := searchWriterFor()
+	synced := 0
+	for start := 0; start < len(applications); start += discoveryBatchSize {
+		end := start + discoveryBatchSize
+		if end > len(applications) {
+			end = len(applications)
+		}
+		batch := applications[start:end]
+		guildIDs := make([]string, 0, len(batch))
+		for _, app := range batch {
+			if id := typedString(app["guild_id"]); id != "" {
+				guildIDs = append(guildIDs, id)
+			}
+		}
+		guilds, err := readGuildsByID(ctx, guildIDs)
+		if err != nil {
+			return err
+		}
+		docs := make([]map[string]any, 0, len(batch))
+		for _, app := range batch {
+			guildID := typedString(app["guild_id"])
+			guild, ok := guilds[guildID]
+			if !ok {
+				continue
+			}
+			docs = append(docs, guildSearchDoc(guild, app))
+		}
+		if len(docs) > 0 {
+			if _, err := writer.upsert(ctx, searchIndexGuilds, docs); err != nil {
+				return err
+			}
+			synced += len(docs)
+		}
+	}
+	log.Printf("syncDiscoveryIndex: synced=%d total=%d", synced, len(applications))
+	return nil
+}
+
+func readApprovedDiscoveryApplications(ctx context.Context) ([]map[string]any, error) {
+	rows, err := db.QueryContext(ctx, `
+SELECT row_data
+FROM fluxer_kv
+WHERE table_name = $1 AND row_data->>'status' = $2`, discoveryByStatusTable, discoveryStatusApproved)
+	if err != nil {
+		// The discovery tables only exist on instances that switched discovery on.
+		// A self-hosted single-community instance has no such rows and may not even
+		// have the table, which is not an error for this task.
+		if strings.Contains(err.Error(), "does not exist") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+	var out []map[string]any
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		data := map[string]any{}
+		if err := json.Unmarshal(raw, &data); err != nil {
+			continue
+		}
+		out = append(out, data)
+	}
+	return out, rows.Err()
+}
+
+func readGuildsByID(ctx context.Context, guildIDs []string) (map[string]map[string]any, error) {
+	out := make(map[string]map[string]any, len(guildIDs))
+	if len(guildIDs) == 0 {
+		return out, nil
+	}
+	rows, err := db.QueryContext(ctx, `
+SELECT row_data
+FROM fluxer_kv
+WHERE table_name = 'guilds' AND row_data->'guild_id'->>'value' = ANY($1)`, guildIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		data := map[string]any{}
+		if err := json.Unmarshal(raw, &data); err != nil {
+			continue
+		}
+		if id := typedString(data["guild_id"]); id != "" {
+			out[id] = data
+		}
+	}
+	return out, rows.Err()
+}
+
+// guildSearchDoc ports convertToSearchableGuild. The discovery context is only
+// attached when the guild is actually discoverable — a guild that lost the
+// feature keeps its row in discovery_by_status but must not be searchable.
+func guildSearchDoc(guild, discovery map[string]any) map[string]any {
+	id := typedString(guild["guild_id"])
+	features := typedStringSlice(guild["features"])
+	isDiscoverable := containsString(features, "DISCOVERABLE") && discovery != nil
+	var discoveryDescription, discoveryCategory, discoveryLanguage any
+	tags := []string{}
+	memberCount := intOrZero(guild["member_count"])
+	if isDiscoverable {
+		discoveryDescription = nullIfEmpty(typedString(discovery["description"]))
+		if category, ok := discovery["category_type"].(float64); ok {
+			discoveryCategory = int64(category)
+		}
+		discoveryLanguage = nullIfEmpty(typedString(discovery["primary_language"]))
+		for _, tag := range typedStringSlice(discovery["custom_tags"]) {
+			if normalized := normalizeDiscoveryTag(tag); normalized != "" {
+				tags = append(tags, normalized)
+			}
+		}
+		if mc, ok := discovery["member_count"].(float64); ok {
+			memberCount = int(mc)
+		}
+	}
+	return map[string]any{
+		"id":                       id,
+		"ownerId":                  typedString(guild["owner_id"]),
+		"name":                     typedString(guild["name"]),
+		"vanityUrlCode":            nullIfEmpty(typedString(guild["vanity_url_code"])),
+		"iconHash":                 nullIfEmpty(typedString(guild["icon_hash"])),
+		"bannerHash":               nullIfEmpty(typedString(guild["banner_hash"])),
+		"splashHash":               nullIfEmpty(typedString(guild["splash_hash"])),
+		"features":                 features,
+		"verificationLevel":        effectiveGuildVerificationLevel(intOrZero(guild["verification_level"]), isDiscoverable),
+		"mfaLevel":                 intOrZero(guild["mfa_level"]),
+		"nsfwLevel":                intOrZero(guild["nsfw_level"]),
+		"createdAt":                snowflakeSeconds(id),
+		"memberCount":              memberCount,
+		"discoveryDescription":     discoveryDescription,
+		"discoveryCategory":        discoveryCategory,
+		"discoveryPrimaryLanguage": discoveryLanguage,
+		"discoveryTags":            tags,
+		"isDiscoverable":           isDiscoverable,
+	}
+}
+
+// effectiveGuildVerificationLevel mirrors getEffectiveGuildVerificationLevel:
+// HIGH caps the stored level, and a discoverable guild is at least LOW.
+func effectiveGuildVerificationLevel(level int, isDiscoverable bool) int {
+	if level > guildVerificationLevelHigh {
+		level = guildVerificationLevelHigh
+	}
+	if level < guildVerificationLevelNone {
+		level = guildVerificationLevelNone
+	}
+	if isDiscoverable && level < guildVerificationLevelLow {
+		return guildVerificationLevelLow
+	}
+	return level
+}
+
+// normalizeDiscoveryTag mirrors normalizeDiscoveryTag: lowercased, trimmed, and
+// without the leading "#" people tend to type.
+func normalizeDiscoveryTag(tag string) string {
+	normalized := strings.ToLower(strings.TrimSpace(tag))
+	return strings.TrimPrefix(normalized, "#")
+}

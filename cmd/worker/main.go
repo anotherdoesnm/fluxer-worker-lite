@@ -459,6 +459,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"indexChannelMessages":                  taskIndexChannelMessages,
 	"indexGuildMembers":                     taskIndexGuildMembers,
 	"backfillUserAclIndex":                  taskBackfillUserACLIndex,
+	"syncDiscoveryIndex":                    taskSyncDiscoveryIndex,
 	"syncThreadSearchDocument":              taskSyncThreadSearchDocument,
 	"backfillThreadSearch":                  taskBackfillThreadSearch,
 	"deleteUserMessagesInGuildByTime":       taskDeleteUserMessagesInGuildByTime,

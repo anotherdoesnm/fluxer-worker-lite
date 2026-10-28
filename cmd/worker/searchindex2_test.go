@@ -150,3 +150,75 @@ func TestUserSearchDocDefaults(t *testing.T) {
 		t.Fatalf("acls = %#v", doc["acls"])
 	}
 }
+
+func TestGuildSearchDoc(t *testing.T) {
+	guild := map[string]any{
+		"guild_id":           map[string]any{"value": "1563469298515574784", "__fluxer_type": "bigint"},
+		"owner_id":           map[string]any{"value": "1563468490076061696", "__fluxer_type": "bigint"},
+		"name":               "1GB RAM Fluxer Testing",
+		"features":           map[string]any{"value": []any{"DISCOVERABLE", "BANNER"}, "__fluxer_type": "set"},
+		"member_count":       5,
+		"verification_level": 0,
+		"mfa_level":          0,
+		"nsfw_level":         0,
+	}
+	discovery := map[string]any{
+		"status":           "approved",
+		"description":      "A tiny test guild",
+		"category_type":    float64(4),
+		"primary_language": "ru",
+		"custom_tags":      []any{"#Sokoban", "  puzzles "},
+	}
+	doc := guildSearchDoc(guild, discovery)
+
+	if doc["id"] != "1563469298515574784" || doc["name"] != "1GB RAM Fluxer Testing" {
+		t.Fatalf("identity: %v", doc)
+	}
+	if doc["isDiscoverable"] != true {
+		t.Fatalf("isDiscoverable = %v", doc["isDiscoverable"])
+	}
+	if doc["verificationLevel"] != guildVerificationLevelLow {
+		t.Fatalf("verificationLevel = %v, want LOW for a discoverable guild", doc["verificationLevel"])
+	}
+	if doc["discoveryDescription"] != "A tiny test guild" || doc["discoveryCategory"] != int64(4) || doc["discoveryPrimaryLanguage"] != "ru" {
+		t.Fatalf("discovery fields: %v", doc)
+	}
+	if !reflect.DeepEqual(doc["discoveryTags"], []string{"sokoban", "puzzles"}) {
+		t.Fatalf("discoveryTags = %v", doc["discoveryTags"])
+	}
+	if !reflect.DeepEqual(doc["features"], []string{"DISCOVERABLE", "BANNER"}) {
+		t.Fatalf("features = %v", doc["features"])
+	}
+}
+
+func TestGuildSearchDocWithoutDiscovery(t *testing.T) {
+	guild := map[string]any{
+		"guild_id":           map[string]any{"value": "7", "__fluxer_type": "bigint"},
+		"name":               "Private",
+		"features":           map[string]any{"value": []any{"BANNER"}, "__fluxer_type": "set"},
+		"verification_level": 9,
+	}
+	doc := guildSearchDoc(guild, nil)
+	if doc["isDiscoverable"] != false {
+		t.Fatalf("isDiscoverable = %v", doc["isDiscoverable"])
+	}
+	// Not discoverable: only the HIGH cap applies.
+	if doc["verificationLevel"] != guildVerificationLevelHigh {
+		t.Fatalf("verificationLevel = %v, want %d", doc["verificationLevel"], guildVerificationLevelHigh)
+	}
+	if doc["discoveryDescription"] != nil || doc["discoveryCategory"] != nil || doc["discoveryPrimaryLanguage"] != nil {
+		t.Fatalf("discovery fields should be null: %v", doc)
+	}
+}
+
+func TestNormalizeDiscoveryTag(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"#Sokoban", "sokoban"},
+		{"  Puzzles  ", "puzzles"},
+		{"", ""},
+	} {
+		if got := normalizeDiscoveryTag(tc.in); got != tc.want {
+			t.Fatalf("normalizeDiscoveryTag(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

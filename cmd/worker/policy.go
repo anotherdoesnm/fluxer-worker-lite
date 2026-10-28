@@ -56,7 +56,6 @@ var ignoredTasks = map[string]string{
 	// starts emitting these jobs once FLUXER_MEILISEARCH_URL points at the
 	// worker's shim, so the remaining ones stay ignored until that is switched on.
 	"refreshSearchIndex": "search backend not switched on yet",
-	"syncDiscoveryIndex": "search backend not switched on yet",
 
 	// Optional feeds and features that are switched off in .env.
 	"syncUrlBlocklists":        "blocklist feeds are disabled",
