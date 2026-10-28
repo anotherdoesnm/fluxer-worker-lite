@@ -55,7 +55,6 @@ var ignoredTasks = map[string]string{
 	// Search: the indexing side is ported (see searchindex.go), but the API only
 	// starts emitting these jobs once FLUXER_MEILISEARCH_URL points at the
 	// worker's shim, so the remaining ones stay ignored until that is switched on.
-	"indexGuildMembers":    "search backend not switched on yet",
 	"refreshSearchIndex":   "search backend not switched on yet",
 	"backfillUserAclIndex": "search backend not switched on yet",
 	"syncDiscoveryIndex":   "search backend not switched on yet",

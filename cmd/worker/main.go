@@ -457,6 +457,7 @@ var handlers = map[string]func(context.Context, map[string]any) error{
 	"crosspostMessageChunk":                 taskCrosspostMessageChunk,
 	"deleteChannelThreads":                  taskDeleteChannelThreads,
 	"indexChannelMessages":                  taskIndexChannelMessages,
+	"indexGuildMembers":                     taskIndexGuildMembers,
 	"syncThreadSearchDocument":              taskSyncThreadSearchDocument,
 	"backfillThreadSearch":                  taskBackfillThreadSearch,
 	"deleteUserMessagesInGuildByTime":       taskDeleteUserMessagesInGuildByTime,
