@@ -3,12 +3,13 @@ package main
 // Generated from the fluxer-api image of build 2026.1025.144746 (digest
 // 408429273dc8), read from src/api/worker/WorkerLaneConfig.ts and
 // WorkerMain.ts in that image. Re-checked against 2026.1026.151750,
-// 2026.1027.210447 (the release this worker is pinned to) and 2026.1028.143032:
-// 5 lanes, 78 tasks, 42 retired, 28 crons — the task tree and
-// WorkerLaneConfig.ts are byte-identical across all four. Do not hand-edit the
-// task lists: regenerate them when the release moves, because a consumer filter
-// that misses one task silently stops that work while everything still looks
-// healthy.
+// 2026.1027.210447, 2026.1028.143032 and 2026.1028.183745 (the release this
+// worker is pinned to): 5 lanes, 80 tasks, 42 retired, 29 crons. The 1028.183745
+// tables differ from the earlier ones by two billing tasks — sendBillingEmail in
+// lifecycle, scanBillingNotices in batch — and one cron for the latter. Do not
+// hand-edit the task lists: regenerate them when the release moves, because a
+// consumer filter that misses one task silently stops that work while everything
+// still looks healthy.
 //
 // retiredTasks are tasks upstream no longer publishes. They stay in our
 // filters on purpose: a leftover message from an older release must be
@@ -49,7 +50,8 @@ var lanes = []laneSpec{
 		Name: "lifecycle", Consumer: "workers_lifecycle_go",
 		Concurrency: 8, MaxAckPending: 50, AckWaitSec: 60, MaxDeliver: 25,
 		Tasks: []string{
-			"processStripeWebhook", "closePaymentDisputeAccounts", "sendSystemDm", "notifyRegistrationApprovers",
+			"processStripeWebhook", "sendBillingEmail", "closePaymentDisputeAccounts", "sendSystemDm",
+			"notifyRegistrationApprovers",
 			"userProcessPendingDeletion", "userProcessPendingDeletions", "applicationProcessDeletion", "guildProcessDeletion",
 			"bulkDeleteSelfMessagesImmediate", "bulkDeleteUserMessages", "deleteUserMessagesInGuildByTime", "messageShred",
 			"harvestGuildData", "harvestUserData", "batchGuildAuditLogMessageDeletes", "reconcileUserPayments",
@@ -66,7 +68,8 @@ var lanes = []laneSpec{
 		Tasks: []string{
 			"expireAttachments", "reconcileAttachmentDecay", "expireReportSnapshots", "clearAuthenticatedReporterEmails",
 			"expireStaleJobs", "indexChannelMessages", "indexGuildMembers", "processAssetDeletionQueue",
-			"processCachePurgeQueue", "processExpiredPremiumSweep", "processInactivityDeletions", "processPendingBulkMessageDeletions",
+			"processCachePurgeQueue", "processExpiredPremiumSweep", "scanBillingNotices", "processInactivityDeletions",
+			"processPendingBulkMessageDeletions",
 			"processPremiumStateReconciliationQueue", "processStorePurchaseRefreshQueue", "pollGooglePlayVoidedPurchases", "pollAppStoreNotificationHistory",
 			"prunePostgresKvTtl", "refreshSearchIndex", "seedThreadPermissions", "archiveInactiveThreads",
 			"repairThreadIndexes", "deleteChannelThreads", "removeThreadMembershipsForGuildMember", "syncThreadSearchDocument",
@@ -105,6 +108,7 @@ var crons = []cronSpec{
 	{"processPendingBulkMessageDeletions", "0 */10 * * * *", "always"},
 	{"userProcessPendingDeletions", "0 * * * * *", "always"},
 	{"processPremiumStateReconciliationQueue", "0 * * * * *", "stripe"},
+	{"scanBillingNotices", "0 15 9 * * *", "stripe"},
 	{"processExpiredPremiumSweep", "0 0 * * * *", "always"},
 	{"closePaymentDisputeAccounts", "0 40 * * * *", "always"},
 	{"processStorePurchaseRefreshQueue", "0 */5 * * * *", "cloud"},

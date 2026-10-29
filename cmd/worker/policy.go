@@ -35,6 +35,8 @@ var ignoredTasks = map[string]string{
 	// provider, so upstream only registers most of these crons when the
 	// instance is not self-hosted (WorkerMain.ts, `if (!Config.instance.selfHosted)`).
 	"processStripeWebhook":                   "no payment provider configured",
+	"sendBillingEmail":                       "no payment provider configured",
+	"scanBillingNotices":                     "no payment provider configured",
 	"processPremiumStateReconciliationQueue": "no payment provider configured",
 	"processExpiredPremiumSweep":             "no premium SKUs on this instance",
 	"closePaymentDisputeAccounts":            "no payment provider configured",
