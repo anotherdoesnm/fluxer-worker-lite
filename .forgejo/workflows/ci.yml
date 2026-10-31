@@ -31,8 +31,16 @@ jobs:
     # строке «missing go.sum entry».
     env:
       GOFLAGS: -mod=mod
+      REPO: https://git.doesnmlab.xyz/${{ github.repository }}.git
     steps:
-      - uses: actions/checkout@v4
+      - name: checkout
+        # Без actions/checkout: это JS-экшен, который раннер клонирует с
+        # data.forgejo.org при старте джобы — на нашем канале это оказалось
+        # дольше самого джоба. Репозиторий публичный и лежит в LAN, поэтому
+        # обычный git clone занимает меньше секунды и ничего не требует.
+        run: |
+          set -eo pipefail
+          git clone --depth 1 --branch "${GITHUB_REF_NAME}" "$REPO" .
 
       - name: формат, vet, сборка, юнит-тесты
         run: |
@@ -55,6 +63,7 @@ jobs:
     timeout-minutes: 15
     env:
       GOFLAGS: -mod=mod
+      REPO: https://git.doesnmlab.xyz/${{ github.repository }}.git
     services:
       postgres:
         image: postgres:17-alpine
@@ -69,7 +78,10 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v4
+      - name: checkout
+        run: |
+          set -eo pipefail
+          git clone --depth 1 --branch "${GITHUB_REF_NAME}" "$REPO" .
 
       - name: SQL-половина batching-задачи на одноразовой базе
         # Тест сам пропускается, если FLUXER_TEST_PG_DSN пуст, поэтому без этого
