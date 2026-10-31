@@ -26,6 +26,11 @@ jobs:
   unit:
     runs-on: warden
     timeout-minutes: 15
+    # go.sum в репозитории неполный: старый CI жил с -mod=mod и подтягивал
+    # недостающие суммы в рабочем дереве. Без этого go vet падает на первой же
+    # строке «missing go.sum entry».
+    env:
+      GOFLAGS: -mod=mod
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +53,8 @@ jobs:
     needs: unit
     runs-on: warden
     timeout-minutes: 15
+    env:
+      GOFLAGS: -mod=mod
     services:
       postgres:
         image: postgres:17-alpine
