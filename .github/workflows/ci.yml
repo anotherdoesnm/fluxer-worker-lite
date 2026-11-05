@@ -1,0 +1,97 @@
+name: ci
+
+# Перенесено с домашнего runnerd на GitHub-hosted раннеры 2026-11-05: домашний CI
+# выключен из-за счёта за электричество. Что изменилось механически:
+#   * `runs-on: warden` -> `ubuntu-latest`, джоба больше не живёт в контейнере
+#     golang:1.24-alpine, поэтому Go ставится setup-go, а не приходит с образом;
+#   * ручной `git clone` из LAN заменён на actions/checkout — здесь он кешируется
+#     и стоит секунды, а не минуты;
+#   * `apk add postgresql-client` больше не нужен: psql есть в образе раннера.
+#
+# `set -eo pipefail` остаётся: без `-e` упавшая команда в конвейере даёт зелёный
+# джоб, который ничего не собрал (разбор в Chrysalis #75).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # go.sum в репозитории неполный: старый CI жил с -mod=mod и подтягивал
+    # недостающие суммы в рабочем дереве. Без этого go vet падает на первой же
+    # строке «missing go.sum entry».
+    env:
+      GOFLAGS: -mod=mod
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: формат
+        run: |
+          set -eo pipefail
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "эти файлы не отформатированы:"; echo "$out"; exit 1
+          fi
+
+      - name: vet, сборка, юнит-тесты
+        run: |
+          set -eo pipefail
+          echo "== go vet";  go vet ./...
+          echo "== go build"; go build ./...
+          echo "== go test (FLUXER_TEST_PG_DSN не задан, база пропускается)"
+          go test ./... -count=1
+
+  pg:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOFLAGS: -mod=mod
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: pw
+          POSTGRES_HOST_AUTH_METHOD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: SQL-половина batching-задачи на одноразовой базе
+        # Тест сам пропускается, если FLUXER_TEST_PG_DSN пуст, поэтому без этого
+        # джоба он не проверялся бы никогда. Схему берём из testdata/fluxer_kv.sql —
+        # это снятый с живого инстанса DDL той единственной таблицы, в которую
+        # пишет задача. Порт сервиса виден на хосте джобы как localhost:5432.
+        run: |
+          set -eo pipefail
+          dsn="postgres://postgres:pw@localhost:5432/postgres?sslmode=disable"
+          echo "== схема"
+          psql "$dsn" -q -v ON_ERROR_STOP=1 -f testdata/fluxer_kv.sql
+          psql "$dsn" -t \
+            -c "select 'fluxer_kv columns: ' || count(*) from information_schema.columns where table_name = 'fluxer_kv'"
+          echo "== go test -run AgainstDB (все тесты, которым нужна живая база)"
+          FLUXER_TEST_PG_DSN="$dsn" go test ./cmd/worker -run "AgainstDB" -count=1 -v

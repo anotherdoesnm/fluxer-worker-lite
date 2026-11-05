@@ -1,0 +1,44 @@
+name: e2e
+
+# Настоящий прогон цепочки, которую не покрывает ни один юнит-тест: бот удаляет
+# свои сообщения → api дебаунсит серию в задачу batchGuildAuditLogMessageDeletes →
+# worker склеивает удаления → в аудит-логе появляется MESSAGE_BULK_DELETE (73)
+# с options {channel_id, count}.
+#
+# Ночью и по кнопке, не на каждый push: это живой инстанс, каждый прогон
+# оставляет запись в аудит-логе.
+#
+# Секрет FLUXER_BOT_TOKEN — токен бота в гильдии FLUXER_E2E_GUILD (по умолчанию
+# «1GB RAM Fluxer Testing»), с правами на каналы, сообщения и аудит-лог.
+#
+# 2026-11-05: раньше джоба запускала `go run` внутри golang:1.24-alpine через
+# podman на домашнем раннере. На GitHub-hosted раннере podman не нужен: ставим
+# Go и запускаем ту же команду прямо на хосте джобы.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+jobs:
+  batch-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: бот удаляет сообщения, worker обязан их склеить
+        env:
+          FLUXER_BOT_TOKEN: ${{ secrets.FLUXER_BOT_TOKEN }}
+        run: |
+          set -eo pipefail
+          if [ -z "$FLUXER_BOT_TOKEN" ]; then
+            echo "ОШИБКА: секрет FLUXER_BOT_TOKEN не задан" >&2
+            exit 1
+          fi
+          go run ./cmd/e2e
