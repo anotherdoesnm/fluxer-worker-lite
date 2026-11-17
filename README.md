@@ -60,6 +60,23 @@ was killed by the kernel.
 container, so the worker always knows which API it serves, and prints either
 `api matches the spec` or a warning naming both releases.
 
+## Tests
+
+Unit tests run in CI (`.github/workflows/ci.yml`, GitHub-hosted runners) and need
+nothing but the repository and a Postgres service container.
+
+The end-to-end audit-log run is **local on purpose**:
+
+```sh
+export FLUXER_BOT_TOKEN=...        # the bot's id.secret
+scripts/e2e.sh                     # FLUXER_BASE_URL defaults to http://192.168.1.109:8080
+```
+
+It talks to a live Fluxer instance, which GitHub-hosted runners cannot reach: the
+runners have no route into the LAN, and the instance is a 1 GiB LXC with
+`onboot: 0` that sleeps most of the time. The script probes the instance first and
+tells you to `pct start 150` if it is asleep, instead of failing with a bare 502.
+
 ## Status
 
 `GET :9099/status` (loopback) returns the counters, lane sizes, parked depth and
