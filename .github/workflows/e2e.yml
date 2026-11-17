@@ -21,7 +21,36 @@ on:
     - cron: "17 3 * * *"
 
 jobs:
+  # The instance is a 1 GiB LXC with onboot: 0, so it is asleep most nights and the
+  # nightly run used to fail with HTTP 502 from the tunnel. Failing on purpose when
+  # nobody is home is noise, not signal: probe first, and only run the scenario when
+  # the api actually answers. A 5xx or a dead connection means "down"; any 2xx-4xx
+  # means "the server is up" (an unauthenticated /users/@me answers 401).
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      up: ${{ steps.probe.outputs.up }}
+    steps:
+      - id: probe
+        name: is the instance awake?
+        run: |
+          set -eo pipefail
+          url="${FLUXER_BASE_URL:-https://fluxer.doesnmlab.xyz}/api/v1/users/@me"
+          code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' "$url" || echo 000)
+          case "$code" in
+            2??|3??|4??)
+              echo "up=true" >> "$GITHUB_OUTPUT"
+              echo "instance answers with $code"
+              ;;
+            *)
+              echo "up=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::instance is down ($code) - skipping e2e; start fluxer-test and run this workflow manually"
+              ;;
+          esac
+
   batch-audit:
+    needs: preflight
+    if: needs.preflight.outputs.up == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -37,7 +66,7 @@ jobs:
           FLUXER_BOT_TOKEN: ${{ secrets.FLUXER_BOT_TOKEN }}
         run: |
           set -eo pipefail
-          if [ -z "$FLUXER_BOT_TOKEN" ]; then
+          if [ -z "${FLUXER_BOT_TOKEN:-}" ]; then
             echo "ОШИБКА: секрет FLUXER_BOT_TOKEN не задан" >&2
             exit 1
           fi
